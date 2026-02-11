@@ -39,6 +39,7 @@ export const useApp = () => {
 
 const Sidebar = () => {
   const location = useLocation();
+  const currentPath = location.pathname || '/';
 
   const links = [
     { to: '/', label: 'Dashboard', icon: 'fa-chart-line' },
@@ -59,18 +60,21 @@ const Sidebar = () => {
         </div>
       </div>
       <nav className="mt-8 px-4 space-y-2">
-        {links.map((link) => (
-          <Link
-            key={link.to}
-            to={link.to}
-            className={`flex items-center px-4 py-3 rounded-xl transition-all duration-200 ${
-              (location.pathname === link.to || (link.to !== '/' && location.pathname.startsWith(link.to))) ? 'bg-sky-600 text-white shadow-lg shadow-sky-900/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <i className={`fa-solid ${link.icon} w-6 text-center mr-3`}></i>
-            <span className="font-semibold text-sm">{link.label}</span>
-          </Link>
-        ))}
+        {links.map((link) => {
+          const isActive = link.to === '/' ? currentPath === '/' : currentPath.startsWith(link.to);
+          return (
+            <Link
+              key={link.to}
+              to={link.to}
+              className={`flex items-center px-4 py-3 rounded-xl transition-all duration-200 ${
+                isActive ? 'bg-sky-600 text-white shadow-lg shadow-sky-900/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <i className={`fa-solid ${link.icon} w-6 text-center mr-3`}></i>
+              <span className="font-semibold text-sm">{link.label}</span>
+            </Link>
+          );
+        })}
       </nav>
     </aside>
   );
@@ -83,7 +87,7 @@ const Topbar = () => {
 
   const getPageTitle = () => {
     const path = location.pathname;
-    if (path === '/' || path === '') return 'SYSTEM DASHBOARD';
+    if (path === '/' || path === '' || !path) return 'SYSTEM DASHBOARD';
     if (path.includes('accounts')) return 'ACCOUNTS REGISTRY';
     if (path.includes('customers')) return 'CUSTOMER MASTER';
     if (path.includes('vendors')) return 'VENDOR MASTER';
@@ -99,7 +103,7 @@ const Topbar = () => {
         <h2 className="text-xs font-black text-slate-400 dark:text-slate-500 tracking-[0.2em] mb-0.5 uppercase">{getPageTitle()}</h2>
         <div className="flex items-center gap-2">
            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-           <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">SYSTEM OPERATIONAL</span>
+           <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">System Operational</span>
         </div>
       </div>
 
@@ -157,7 +161,16 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 const App: React.FC = () => {
   const [state, setState] = useState<GlobalState>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : DEFAULT_STATE;
+    // Deep merge saved state with default to ensure new fields are present
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        ...DEFAULT_STATE,
+        ...parsed,
+        settings: { ...DEFAULT_STATE.settings, ...parsed.settings }
+      };
+    }
+    return DEFAULT_STATE;
   });
 
   useEffect(() => {
@@ -267,6 +280,7 @@ const App: React.FC = () => {
       <HashRouter>
         <Layout>
           <Routes>
+            <Route index element={<Dashboard />} />
             <Route path="/" element={<Dashboard />} />
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/customers" element={<CustomerList />} />
@@ -278,7 +292,6 @@ const App: React.FC = () => {
             <Route path="/ledger/:type/:id" element={<LedgerView />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<Settings />} />
-            {/* Catch all route */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>
