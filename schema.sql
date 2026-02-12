@@ -1,16 +1,14 @@
+
 -- ======================================================
--- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.1)
--- RECONSTRUCTED FOR CLONING & INTEGRATED DELETIONS
+-- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.3)
 -- ======================================================
 
--- 0. SCHEMA PERMISSIONS
 GRANT USAGE ON SCHEMA public TO public;
 GRANT USAGE ON SCHEMA public TO anon;
 GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT USAGE ON SCHEMA public TO postgres;
 
--- 1. DROP EXISTING TO REGENERATE WITH NEW CONSTRAINTS
 DROP TABLE IF EXISTS ledger_entries CASCADE;
 DROP TABLE IF EXISTS hotel_vouchers CASCADE;
 DROP TABLE IF EXISTS transport_vouchers CASCADE;
@@ -26,12 +24,10 @@ DROP FUNCTION IF EXISTS cleanup_ledger_on_delete() CASCADE;
 DROP TYPE IF EXISTS voucher_status CASCADE;
 DROP TYPE IF EXISTS account_category CASCADE;
 
--- 2. ENUMS & CORE EXTENSIONS
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TYPE voucher_status AS ENUM ('Draft', 'Posted', 'Cancelled');
 CREATE TYPE account_category AS ENUM ('Asset', 'Liability', 'Income', 'Expense', 'Equity', 'Cash', 'Bank', 'Receivable', 'Payable');
 
--- 3. MASTER TABLES
 CREATE TABLE chart_of_accounts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     account_code TEXT UNIQUE NOT NULL,
@@ -50,7 +46,7 @@ CREATE TABLE customers (
     city TEXT,
     address TEXT,
     opening_balance DECIMAL(15,2) DEFAULT 0,
-    opening_balance_type TEXT DEFAULT 'Receivable', -- Fixed: Added type persistence
+    opening_balance_type TEXT DEFAULT 'Receivable',
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -64,12 +60,11 @@ CREATE TABLE vendors (
     city TEXT,
     address TEXT,
     opening_balance DECIMAL(15,2) DEFAULT 0,
-    opening_balance_type TEXT DEFAULT 'Payable', -- Fixed: Added type persistence
+    opening_balance_type TEXT DEFAULT 'Payable',
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. FINANCIAL VOUCHERS
 CREATE TABLE hotel_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     voucher_no TEXT UNIQUE NOT NULL,
@@ -98,9 +93,11 @@ CREATE TABLE transport_vouchers (
     vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
     route TEXT,
     vehicle_type TEXT,
-    amount_sar DECIMAL(15,2),
+    amount_sar DECIMAL(15,2), -- This acts as Sale Rate
+    buy_rate_sar DECIMAL(15,2) DEFAULT 0, -- Added for professional payable tracking
     roe DECIMAL(10,4),
-    amount_pkr DECIMAL(15,2) GENERATED ALWAYS AS (amount_sar * roe) STORED,
+    amount_pkr DECIMAL(15,2) GENERATED ALWAYS AS (amount_sar * roe) STORED, -- Total Sale
+    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (buy_rate_sar * roe) STORED, -- Total Payable to Vendor
     remarks TEXT,
     status voucher_status DEFAULT 'Posted'
 );
@@ -162,7 +159,6 @@ CREATE TABLE ledger_entries (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. TRIGGER: CLEANUP LEDGER ON DELETE
 CREATE OR REPLACE FUNCTION cleanup_ledger_on_delete()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -171,7 +167,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 6. TRIGGER: AUTOMATED ACCOUNTING POSTS
 CREATE OR REPLACE FUNCTION process_voucher_ledger_post()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -195,10 +190,35 @@ BEGIN
     ELSIF TG_TABLE_NAME = 'transport_vouchers' THEN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4001' LIMIT 1;
         v_narration := 'Transport: ' || COALESCE(NEW.route, 'Trip');
+        -- DR Customer
         INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
         VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.amount_pkr, v_narration);
+        -- CR Vendor (Payable)
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.total_buy_pkr, 'Cost: ' || v_narration);
+        -- CR Income (Margin)
         INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, NEW.amount_pkr, 'Income: ' || v_narration);
+        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.amount_pkr - NEW.total_buy_pkr), 'Income: ' || v_narration);
+
+    ELSIF TG_TABLE_NAME = 'ticket_vouchers' THEN
+        SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4003' LIMIT 1;
+        v_narration := 'Ticket: ' || COALESCE(NEW.airline_name, 'Air') || ' - ' || COALESCE(NEW.passenger_name, 'Pax');
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
+        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.total_sale_pkr, v_narration);
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.net_buy_pkr, 'Cost: ' || v_narration);
+        INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.total_sale_pkr - NEW.net_buy_pkr), 'Margin: ' || v_narration);
+
+    ELSIF TG_TABLE_NAME = 'visa_vouchers' THEN
+        SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4004' LIMIT 1;
+        v_narration := 'Visa: ' || COALESCE(NEW.country, 'Dest') || ' - ' || COALESCE(NEW.passenger_name, 'Pax');
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
+        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.sale_rate_pkr, v_narration);
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.buy_rate_pkr, 'Cost: ' || v_narration);
+        INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.sale_rate_pkr - NEW.buy_rate_pkr), 'Margin: ' || v_narration);
 
     ELSIF TG_TABLE_NAME = 'receipts' THEN
         v_narration := 'Receipt: ' || COALESCE(NEW.narration, 'Pymt');
@@ -216,7 +236,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 7. BIND TRIGGERS
 CREATE TRIGGER trg_hotel_cleanup AFTER DELETE ON hotel_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
 CREATE TRIGGER trg_transport_cleanup AFTER DELETE ON transport_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
 CREATE TRIGGER trg_ticket_cleanup AFTER DELETE ON ticket_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
@@ -229,7 +248,6 @@ CREATE TRIGGER trg_ticket_post AFTER INSERT OR UPDATE ON ticket_vouchers FOR EAC
 CREATE TRIGGER trg_visa_post AFTER INSERT OR UPDATE ON visa_vouchers FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
 CREATE TRIGGER trg_receipt_post AFTER INSERT OR UPDATE ON receipts FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
 
--- 8. SEED ACCOUNTS
 INSERT INTO chart_of_accounts (account_code, account_name, account_type, is_system_generated) VALUES
 ('1001', 'CASH IN HAND', 'Cash', true),
 ('1002', 'BANK - MAIN ACCOUNT', 'Bank', true),
@@ -241,17 +259,6 @@ INSERT INTO chart_of_accounts (account_code, account_name, account_type, is_syst
 ('4004', 'VISA SERVICE INCOME', 'Income', false),
 ('5001', 'OFFICE EXPENSES', 'Expense', false)
 ON CONFLICT (account_code) DO NOTHING;
-
--- 9. SECURITY
-ALTER TABLE hotel_vouchers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE transport_vouchers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE ticket_vouchers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE visa_vouchers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE receipts DISABLE ROW LEVEL SECURITY;
-ALTER TABLE ledger_entries DISABLE ROW LEVEL SECURITY;
-ALTER TABLE customers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE vendors DISABLE ROW LEVEL SECURITY;
-ALTER TABLE chart_of_accounts DISABLE ROW LEVEL SECURITY;
 
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role, public;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role, public;

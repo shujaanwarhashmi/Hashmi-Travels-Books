@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useApp } from '../App';
 import { calculateAccountBalance, formatCurrency } from '../utils/accounting';
@@ -34,14 +33,7 @@ const Accounts: React.FC = () => {
   };
 
   const getBalanceDisplay = (accId: string, type: string) => {
-    const debitTotal = state.vouchers.reduce((sum, v) => 
-      sum + v.entries.filter(e => e.accountId === accId).reduce((s, e) => s + e.debit, 0), 0
-    );
-    const creditTotal = state.vouchers.reduce((sum, v) => 
-      sum + v.entries.filter(e => e.accountId === accId).reduce((s, e) => s + e.credit, 0), 0
-    );
-
-    const net = debitTotal - creditTotal;
+    const net = calculateAccountBalance(accId, state);
     
     if (net === 0) return <span className="text-slate-200">---</span>;
 

@@ -248,7 +248,7 @@ const App: React.FC = () => {
           address: c.address || '', 
           city: c.city, 
           openingBalance: Number(c.opening_balance), 
-          openingBalanceType: (c.opening_balance_type as any) || 'Receivable', // Fixed: Use DB value
+          openingBalanceType: (c.opening_balance_type as any) || 'Receivable',
           isActive: c.is_active, 
           status: 'Active & Visible' 
         })),
@@ -261,7 +261,7 @@ const App: React.FC = () => {
           address: v.address || '', 
           city: v.city, 
           openingBalance: Number(v.opening_balance), 
-          openingBalanceType: (v.opening_balance_type as any) || 'Payable', // Fixed: Use DB value
+          openingBalanceType: (v.opening_balance_type as any) || 'Payable',
           isActive: v.is_active, 
           status: 'Active & Visible' 
         }))
@@ -321,11 +321,17 @@ const App: React.FC = () => {
       address: c.address || '', 
       city: c.city, 
       opening_balance: c.openingBalance, 
-      opening_balance_type: c.openingBalanceType, // Fixed: Save type
+      opening_balance_type: c.openingBalanceType,
       is_active: c.isActive 
     };
     const { error } = c.id && c.id.length > 20 ? await supabase.from('customers').update(p).eq('id', c.id) : await supabase.from('customers').insert(p);
-    if (error) alert(error.message);
+    if (error) {
+      if (error.message.includes('opening_balance_type')) {
+        alert("CRITICAL: Column 'opening_balance_type' is missing in your database. Please run the provided schema.sql script in Supabase.");
+      } else {
+        alert(error.message);
+      }
+    }
     await fetchData();
   };
 
@@ -339,7 +345,7 @@ const App: React.FC = () => {
       address: v.address || '', 
       city: v.city, 
       opening_balance: v.openingBalance, 
-      opening_balance_type: v.openingBalanceType, // Fixed: Save type
+      opening_balance_type: v.openingBalanceType,
       is_active: v.isActive 
     };
     const { error } = v.id && v.id.length > 20 ? await supabase.from('vendors').update(p).eq('id', v.id) : await supabase.from('vendors').insert(p);
