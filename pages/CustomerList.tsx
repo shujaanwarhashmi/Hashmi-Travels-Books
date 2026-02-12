@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useApp } from '../App';
 import { useNavigate } from 'react-router-dom';
@@ -6,12 +5,11 @@ import { formatCurrency, calculateAccountBalance, generateId } from '../utils/ac
 import { Customer } from '../types';
 
 const CustomerList: React.FC = () => {
-  const { state, setState, cloneCustomer, deleteCustomer } = useApp();
+  const { state, upsertCustomer, deleteCustomer } = useApp();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const { compactView } = state.settings;
 
   const [formData, setFormData] = useState({
     name: '',
@@ -54,41 +52,39 @@ const CustomerList: React.FC = () => {
     setShowModal(true);
   };
 
-  const handleSave = () => {
+  const handleClone = (cust: Customer) => {
+    setEditingId(null);
+    setFormData({
+      name: `${cust.name} (CLONE)`,
+      phone: cust.phone,
+      email: cust.email,
+      city: cust.city,
+      address: cust.address,
+      status: 'Active & Visible',
+      openingBalance: 0,
+      side: cust.openingBalanceType as any
+    });
+    setShowModal(true);
+  };
+
+  const handleSave = async () => {
     if (!formData.name) return alert("Customer name is required.");
 
-    if (editingId) {
-      setState(prev => ({
-        ...prev,
-        customers: prev.customers.map(c => c.id === editingId ? {
-          ...c,
-          name: formData.name,
-          phone: formData.phone,
-          email: formData.email,
-          address: formData.address,
-          city: formData.city,
-          openingBalance: formData.openingBalance,
-          openingBalanceType: formData.side,
-          isActive: formData.status === 'Active & Visible',
-          status: formData.status
-        } : c)
-      }));
-    } else {
-      const newCust: Customer = {
-        id: generateId(),
-        code: `C-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
-        name: formData.name,
-        phone: formData.phone,
-        email: formData.email,
-        address: formData.address,
-        city: formData.city,
-        openingBalance: formData.openingBalance,
-        openingBalanceType: formData.side,
-        isActive: formData.status === 'Active & Visible',
-        status: formData.status
-      };
-      setState(prev => ({ ...prev, customers: [...prev.customers, newCust] }));
-    }
+    const customerData: Partial<Customer> = {
+      id: editingId || undefined,
+      code: `C-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
+      name: formData.name,
+      phone: formData.phone,
+      email: formData.email,
+      address: formData.address,
+      city: formData.city,
+      openingBalance: formData.openingBalance,
+      openingBalanceType: formData.side,
+      isActive: formData.status === 'Active & Visible',
+      status: formData.status
+    };
+
+    await upsertCustomer(customerData);
     setShowModal(false);
   };
 
@@ -140,7 +136,7 @@ const CustomerList: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filteredCustomers.map(c => {
-                const balance = calculateAccountBalance('acc-3', state.vouchers, c.openingBalanceType === 'Receivable' ? c.openingBalance : -c.openingBalance, 'Debit');
+                const balance = calculateAccountBalance('acc-3', state.vouchers, c.openingBalanceType === 'Receivable' ? c.openingBalance : -c.openingBalance, 'Debit', c.id);
                 return (
                   <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
                     <td className="px-6 py-4 text-sm font-black text-sky-500">{c.code}</td>
@@ -154,46 +150,15 @@ const CustomerList: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 text-center opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
-                          <button 
-                            onClick={() => navigate(`/ledger/Customer/${c.id}`)}
-                            className="p-2 text-slate-400 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-900/20 rounded-lg transition-colors"
-                            title="View Statement"
-                          >
-                            <i className="fa-solid fa-book-open"></i>
-                          </button>
-                          <button 
-                            onClick={() => cloneCustomer(c.id)}
-                            className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded-lg transition-colors"
-                            title="Duplicate"
-                          >
-                            <i className="fa-solid fa-copy"></i>
-                          </button>
-                          <button 
-                            onClick={() => handleEdit(c)}
-                            className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-colors"
-                            title="Modify"
-                          >
-                            <i className="fa-solid fa-user-pen"></i>
-                          </button>
-                          <button 
-                            onClick={() => deleteCustomer(c.id)}
-                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition-colors"
-                            title="Remove"
-                          >
-                            <i className="fa-solid fa-user-minus"></i>
-                          </button>
+                          <button onClick={() => navigate(`/ledger/Customer/${c.id}`)} className="p-2 text-slate-400 hover:text-sky-600" title="Statement"><i className="fa-solid fa-book-open"></i></button>
+                          <button onClick={() => handleClone(c)} className="p-2 text-slate-400 hover:text-emerald-600" title="Clone"><i className="fa-solid fa-copy"></i></button>
+                          <button onClick={() => handleEdit(c)} className="p-2 text-slate-400 hover:text-indigo-600" title="Modify"><i className="fa-solid fa-user-pen"></i></button>
+                          <button onClick={() => deleteCustomer(c.id)} className="p-2 text-slate-400 hover:text-rose-600" title="Remove"><i className="fa-solid fa-trash"></i></button>
                         </div>
                     </td>
                   </tr>
                 );
               })}
-              {filteredCustomers.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-6 py-20 text-center text-slate-400 font-bold uppercase tracking-widest">
-                    No matching clients found.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
@@ -204,8 +169,8 @@ const CustomerList: React.FC = () => {
           <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200 border border-slate-100 dark:border-slate-800">
             <div className="bg-[#0B1120] text-white p-8 flex justify-between items-center">
               <div>
-                <h2 className="font-black text-lg uppercase tracking-tighter">{editingId ? 'Edit Customer' : 'Add New Customer'}</h2>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client Master Registry</p>
+                <h2 className="font-black text-lg uppercase tracking-tighter">{editingId ? 'Edit Customer' : 'Client Registry'}</h2>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Master Account Definition</p>
               </div>
               <button onClick={() => setShowModal(false)} className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 hover:text-white transition-colors">
                 <i className="fa-solid fa-times"></i>
@@ -215,52 +180,33 @@ const CustomerList: React.FC = () => {
             <div className="p-8 space-y-6">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Name / Agent Title *</label>
-                <input 
-                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl px-5 py-3.5 text-sm font-bold text-slate-800 dark:text-slate-200 outline-none focus:border-sky-500 transition-all"
-                  placeholder="e.g. Dream Travel Agency"
-                  value={formData.name}
-                  onChange={e => setFormData({...formData, name: e.target.value})}
-                />
+                <input className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl px-5 py-3.5 text-sm font-bold outline-none uppercase" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Primary Contact</label>
-                  <input className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl px-5 py-3.5 text-sm font-bold dark:text-slate-200 outline-none" placeholder="Mobile #" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+                  <input className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl px-5 py-3.5 text-sm font-bold" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email Address</label>
-                  <input className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl px-5 py-3.5 text-sm font-bold dark:text-slate-200 outline-none" placeholder="info@travel.com" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Location / City</label>
-                  <input className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl px-5 py-3.5 text-sm font-bold dark:text-slate-200 outline-none uppercase" placeholder="e.g. Karachi" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">System Status</label>
-                  <select className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl px-5 py-3.5 text-sm font-bold outline-none dark:text-slate-200" value={formData.status} onChange={e => setFormData({...formData, status: e.target.value as any})}>
-                    <option>Active & Visible</option>
-                    <option>Inactive</option>
-                  </select>
+                  <input className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl px-5 py-3.5 text-sm font-bold uppercase" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} />
                 </div>
               </div>
 
               <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-2xl border border-slate-100 dark:border-slate-700 space-y-4">
                 <div className="flex items-center gap-3 text-emerald-500">
                    <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center border border-emerald-100 dark:border-emerald-800"><i className="fa-solid fa-wallet"></i></div>
-                   <span className="text-[10px] font-black uppercase tracking-widest">Accounting Opening Setup</span>
+                   <span className="text-[10px] font-black uppercase tracking-widest">Opening Setup</span>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Opening Balance</label>
-                    <input type="number" className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-black dark:text-slate-200" value={formData.openingBalance} onChange={e => setFormData({...formData, openingBalance: Number(e.target.value)})} />
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Balance</label>
+                    <input type="number" className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-black" value={formData.openingBalance} onChange={e => setFormData({...formData, openingBalance: Number(e.target.value)})} />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Balance Nature</label>
-                    <select className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-black outline-none dark:text-slate-200" value={formData.side} onChange={e => setFormData({...formData, side: e.target.value as any})}>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nature</label>
+                    <select className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-black" value={formData.side} onChange={e => setFormData({...formData, side: e.target.value as any})}>
                       <option value="Receivable">Receivable (Dr)</option>
                       <option value="Payable">Payable (Cr)</option>
                     </select>
@@ -269,9 +215,9 @@ const CustomerList: React.FC = () => {
               </div>
 
               <div className="flex gap-4 pt-4">
-                <button onClick={() => setShowModal(false)} className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition-colors">Cancel</button>
-                <button onClick={handleSave} className="flex-1 bg-[#0B1120] dark:bg-sky-600 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-800 transition-all shadow-lg">
-                  <i className="fa-solid fa-save"></i> {editingId ? 'Update Client' : 'Add Client'}
+                <button onClick={() => setShowModal(false)} className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-600 py-4 rounded-2xl font-black text-xs uppercase tracking-widest">Cancel</button>
+                <button onClick={handleSave} className="flex-1 bg-[#0B1120] dark:bg-sky-600 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg">
+                  <i className="fa-solid fa-save"></i> Commit Record
                 </button>
               </div>
             </div>

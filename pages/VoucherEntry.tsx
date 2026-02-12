@@ -33,13 +33,18 @@ const VoucherEntryPage: React.FC = () => {
   const searchParams = new URLSearchParams(location.search);
   const cloneId = searchParams.get('cloneFrom');
   const isEdit = !!id;
+  const isClone = !!cloneId;
   const targetId = id || cloneId;
   const sourceVoucher = state.vouchers.find(v => v.id === targetId);
 
   const [type, setType] = useState<VoucherType>(sourceVoucher?.type || 'Ticket');
   const [date, setDate] = useState(isEdit ? sourceVoucher?.date || '' : new Date().toISOString().split('T')[0]);
   
-  const [voucherNo, setVoucherNo] = useState(isEdit ? sourceVoucher?.voucherNo || '' : (cloneId ? `CLONE-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}` : `V-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`));
+  const [voucherNo, setVoucherNo] = useState(() => {
+    if (isEdit) return sourceVoucher?.voucherNo || '';
+    if (isClone) return `CLONE-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
+    return `V-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
+  });
   
   const [currency, setCurrency] = useState<'SAR' | 'PKR'>(sourceVoucher?.currency || 'PKR');
   const [roe, setRoe] = useState(sourceVoucher?.roe || state.settings.defaultRoe);
@@ -812,11 +817,12 @@ const VoucherEntryPage: React.FC = () => {
                     } text-xl`}></i>
                  </div>
                  <h1 className="text-2xl font-black uppercase tracking-tighter">
-                   NEW {type === 'Ticket' ? 'TICKET ENTRY' : (type === 'Visa' ? 'VISA CASE' : type.toUpperCase())}
+                   {isClone ? 'CLONE ' : (isEdit ? 'EDIT ' : 'NEW ')}
+                   {type === 'Ticket' ? 'TICKET ENTRY' : (type === 'Visa' ? 'VISA CASE' : type.toUpperCase())}
                  </h1>
               </div>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-13">
-                 {type === 'Ticket' ? 'Air Ticketing Repository Core' : (type === 'Visa' ? 'Visa Processing & Compliance Core' : 'Financial Ledger Module')}
+                 {isClone ? 'DUPLICATING RECORD - UPDATE DETAILS' : (type === 'Ticket' ? 'Air Ticketing Repository Core' : (type === 'Visa' ? 'Visa Processing & Compliance Core' : 'Financial Ledger Module'))}
               </p>
            </div>
         </div>
@@ -830,7 +836,6 @@ const VoucherEntryPage: React.FC = () => {
               <button type="button" onClick={() => setType('Transport')} className={`text-[9px] font-black uppercase tracking-widest px-4 py-2.5 rounded-lg transition-all ${type === 'Transport' ? 'bg-sky-500 text-white' : 'text-slate-500'}`}>Transport</button>
            </div>
 
-           {/* UNIVERSAL CURRENCY SELECTOR */}
            <div className="bg-[#151B2B] p-2 rounded-2xl border border-slate-800 shadow-xl flex items-center gap-2">
               <div className="flex bg-[#0B1120] rounded-xl p-1">
                  <button type="button" onClick={() => setCurrency('PKR')} className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${currency === 'PKR' ? 'bg-sky-500 text-white' : 'text-slate-500'}`}>PKR</button>
@@ -847,7 +852,7 @@ const VoucherEntryPage: React.FC = () => {
            <div className="bg-[#151B2B] p-4 rounded-2xl border border-slate-800 shadow-xl flex items-center gap-4">
               <div className="space-y-1">
                 <p className="text-[9px] font-black text-sky-400 uppercase tracking-widest">Voucher Ref</p>
-                <input type="text" className="bg-transparent text-sm font-black outline-none text-white tracking-widest uppercase w-24" value={voucherNo} onChange={e => setVoucherNo(e.target.value)} />
+                <input type="text" className="bg-transparent text-sm font-black outline-none text-white tracking-widest uppercase w-32" value={voucherNo} onChange={e => setVoucherNo(e.target.value)} />
               </div>
            </div>
 

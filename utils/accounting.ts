@@ -1,4 +1,3 @@
-
 import { Voucher, VoucherEntry, Account, GlobalState } from '../types';
 
 export const formatCurrency = (amount: number, currency: string = 'PKR') => {
@@ -9,24 +8,41 @@ export const formatCurrency = (amount: number, currency: string = 'PKR') => {
   }).format(amount);
 };
 
-export const calculateAccountBalance = (accountId: string, vouchers: Voucher[], openingBalance: number = 0, balanceType: 'Debit' | 'Credit' = 'Debit') => {
+/**
+ * Calculates the balance for a specific account, optionally filtered by a specific customer or vendor.
+ */
+export const calculateAccountBalance = (
+  accountId: string, 
+  vouchers: Voucher[], 
+  openingBalance: number = 0, 
+  balanceType: 'Debit' | 'Credit' = 'Debit',
+  partyId?: string
+) => {
   let totalDebit = 0;
   let totalCredit = 0;
 
   vouchers.forEach(v => {
-    if (v.status !== 'Posted') return;
+    // If status exists and is not Posted, skip. If status is missing (like in receipts), assume Posted.
+    if (v.status && v.status !== 'Posted') return;
+    
     v.entries.forEach(e => {
+      // Check if account matches
       if (e.accountId === accountId) {
-        totalDebit += e.debit;
-        totalCredit += e.credit;
+        // If partyId is provided, only include entries for that specific party
+        if (partyId) {
+          if (e.customerId !== partyId && e.vendorId !== partyId) return;
+        }
+        
+        totalDebit += Number(e.debit || 0);
+        totalCredit += Number(e.credit || 0);
       }
     });
   });
 
   if (balanceType === 'Debit') {
-    return openingBalance + totalDebit - totalCredit;
+    return Number(openingBalance) + totalDebit - totalCredit;
   } else {
-    return openingBalance + totalCredit - totalDebit;
+    return Number(openingBalance) + totalCredit - totalDebit;
   }
 };
 
@@ -41,12 +57,12 @@ export const getAccountLedger = (accountId: string, fromDate: string, toDate: st
   let openingCredit = 0;
   
   state.vouchers.forEach(v => {
-    if (v.status !== 'Posted') return;
+    if (v.status && v.status !== 'Posted') return;
     if (new Date(v.date) < new Date(fromDate)) {
       v.entries.forEach(e => {
         if (e.accountId === accountId) {
-          openingDebit += e.debit;
-          openingCredit += e.credit;
+          openingDebit += Number(e.debit || 0);
+          openingCredit += Number(e.credit || 0);
         }
       });
     }
@@ -67,16 +83,16 @@ export const getAccountLedger = (accountId: string, fromDate: string, toDate: st
   }];
 
   const periodVouchers = state.vouchers
-    .filter(v => v.status === 'Posted' && v.date >= fromDate && v.date <= toDate)
+    .filter(v => (!v.status || v.status === 'Posted') && v.date >= fromDate && v.date <= toDate)
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   periodVouchers.forEach(v => {
     v.entries.forEach(e => {
       if (e.accountId === accountId) {
         if (isDebitNormal) {
-          runningBalance += e.debit - e.credit;
+          runningBalance += Number(e.debit || 0) - Number(e.credit || 0);
         } else {
-          runningBalance += e.credit - e.debit;
+          runningBalance += Number(e.credit || 0) - Number(e.debit || 0);
         }
         
         ledgerEntries.push({
@@ -85,8 +101,8 @@ export const getAccountLedger = (accountId: string, fromDate: string, toDate: st
           voucherNo: v.voucherNo,
           type: v.type,
           description: e.description || v.description,
-          debit: e.debit,
-          credit: e.credit,
+          debit: Number(e.debit || 0),
+          credit: Number(e.credit || 0),
           balance: runningBalance,
           isDebit: isDebitNormal
         });
@@ -104,22 +120,24 @@ export const getLedger = (partyId: string, partyType: 'Customer' | 'Vendor', sta
 
   if (!party) return [];
 
-  let runningBalance = party.openingBalance;
-  
+  let runningBalance = Number(party.openingBalance || 0);
+  const isReceivable = partyType === 'Customer' && party.openingBalanceType === 'Receivable';
+  const isPayable = partyType === 'Vendor' && party.openingBalanceType === 'Payable';
+
   const entries: any[] = [{
     date: 'Opening',
     voucherNo: '-',
     type: 'Opening Balance',
     description: 'Initial balance',
-    debit: partyType === 'Customer' && party.openingBalanceType === 'Receivable' ? party.openingBalance : 0,
-    credit: partyType === 'Customer' && party.openingBalanceType === 'Payable' ? party.openingBalance : 0,
+    debit: isReceivable ? Number(party.openingBalance) : 0,
+    credit: isPayable ? Number(party.openingBalance) : 0,
     balance: runningBalance
   }];
 
   const partyEntries: any[] = [];
 
   state.vouchers.forEach(v => {
-    if (v.status !== 'Posted') return;
+    if (v.status && v.status !== 'Posted') return;
     v.entries.forEach(e => {
       const isMatch = partyType === 'Customer' ? e.customerId === partyId : e.vendorId === partyId;
       if (isMatch) {
@@ -127,9 +145,9 @@ export const getLedger = (partyId: string, partyType: 'Customer' | 'Vendor', sta
           date: v.date,
           voucherNo: v.voucherNo,
           type: v.type,
-          description: v.description,
-          debit: e.debit,
-          credit: e.credit,
+          description: e.description || v.description,
+          debit: Number(e.debit || 0),
+          credit: Number(e.credit || 0),
           roe: v.roe,
           currency: v.currency
         });

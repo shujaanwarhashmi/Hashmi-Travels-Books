@@ -8,6 +8,8 @@ export interface Account {
   type: AccountType;
   code: string;
   isSystem?: boolean;
+  // dbId is used to store the Supabase UUID for database operations and mapping
+  dbId?: string;
 }
 
 export interface Customer {

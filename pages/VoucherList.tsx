@@ -116,6 +116,13 @@ const VoucherList: React.FC = () => {
                       <div className="flex items-center justify-center gap-1">
                         <Link to={`/vouchers/view/${v.id}`} className="p-2 text-slate-400 hover:text-sky-600 transition-colors" title="View Detail"><i className="fa-solid fa-eye"></i></Link>
                         <button 
+                          onClick={() => navigate(`/vouchers/new?cloneFrom=${v.id}`)}
+                          className="p-2 text-slate-400 hover:text-emerald-600 transition-colors"
+                          title="Clone Record"
+                        >
+                          <i className="fa-solid fa-copy"></i>
+                        </button>
+                        <button 
                           onClick={() => navigate(`/vouchers/edit/${v.id}`)}
                           className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
                           title="Edit"

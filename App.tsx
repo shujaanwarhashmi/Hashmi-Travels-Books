@@ -12,21 +12,28 @@ import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import Accounts from './pages/Accounts';
 import VoucherDetail from './pages/VoucherDetail';
+import Login from './pages/Login';
 import { generateId } from './utils/accounting';
+import { supabase } from './lib/supabase';
 
 interface AppContextType {
   state: GlobalState;
   setState: React.Dispatch<React.SetStateAction<GlobalState>>;
-  addVoucher: (v: Voucher) => void;
-  deleteVoucher: (id: string) => void;
-  cloneVoucher: (id: string) => void;
-  cloneCustomer: (id: string) => void;
-  cloneVendor: (id: string) => void;
-  deleteCustomer: (id: string) => void;
-  deleteVendor: (id: string) => void;
-  deleteAccount: (id: string) => void;
+  session: any | null;
+  loading: boolean;
+  dbStatus: 'connecting' | 'connected' | 'error' | 'empty';
+  logout: () => void;
+  refreshData: () => Promise<void>;
+  addVoucher: (v: Voucher) => Promise<void>;
+  deleteVoucher: (id: string) => Promise<void>;
+  upsertCustomer: (c: Partial<Customer>) => Promise<void>;
+  upsertVendor: (v: Partial<Vendor>) => Promise<void>;
+  deleteCustomer: (id: string) => Promise<void>;
+  deleteVendor: (id: string) => Promise<void>;
+  deleteAccount: (id: string) => Promise<void>;
   toggleTheme: () => void;
   toggleCompact: () => void;
+  enterGuestMode: () => void;
 }
 
 export const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -81,7 +88,7 @@ const Sidebar = () => {
 };
 
 const Topbar = () => {
-  const { state, toggleTheme, toggleCompact } = useApp();
+  const { state, toggleTheme, toggleCompact, logout, session, refreshData, loading, dbStatus } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -97,13 +104,23 @@ const Topbar = () => {
     return 'TRAVEL ERP';
   };
 
+  const getStatusColor = () => {
+    if (loading) return 'bg-amber-500 animate-pulse';
+    if (dbStatus === 'connected') return 'bg-emerald-500';
+    if (dbStatus === 'error') return 'bg-rose-500';
+    if (dbStatus === 'empty') return 'bg-sky-500';
+    return 'bg-slate-500';
+  };
+
   return (
     <header className="no-print sticky top-0 z-40 h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 flex items-center justify-between px-8">
       <div className="flex-1 min-w-0">
         <h2 className="text-xs font-black text-slate-400 dark:text-slate-500 tracking-[0.2em] mb-0.5 uppercase">{getPageTitle()}</h2>
         <div className="flex items-center gap-2">
-           <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-           <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">System Operational</span>
+           <div className={`w-2 h-2 rounded-full ${getStatusColor()}`}></div>
+           <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+             {loading ? 'Syncing...' : dbStatus === 'connected' ? 'Cloud Ledger Online' : dbStatus === 'error' ? 'Sync Failed' : 'Ready'}
+           </span>
         </div>
       </div>
 
@@ -114,6 +131,13 @@ const Topbar = () => {
       </div>
 
       <div className="flex-1 flex justify-end items-center gap-4">
+        <button 
+          onClick={() => refreshData()}
+          className="p-2 text-slate-400 hover:text-sky-500 transition-colors"
+          title="Refresh Data"
+        >
+          <i className={`fa-solid fa-arrows-rotate ${loading ? 'animate-spin' : ''}`}></i>
+        </button>
         <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
            <button 
              onClick={toggleCompact}
@@ -128,6 +152,13 @@ const Topbar = () => {
              title="Toggle Dark Mode"
            >
              <i className={`fa-solid ${state.settings.theme === 'dark' ? 'fa-moon' : 'fa-sun'} text-xs`}></i>
+           </button>
+           <button 
+             onClick={logout}
+             className="w-8 h-8 rounded flex items-center justify-center transition-all text-slate-400 hover:text-rose-500"
+             title="Logout"
+           >
+             <i className="fa-solid fa-power-off text-xs"></i>
            </button>
         </div>
         <button 
@@ -159,142 +190,197 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 const App: React.FC = () => {
-  const [state, setState] = useState<GlobalState>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    // Deep merge saved state with default to ensure new fields are present
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return {
-        ...DEFAULT_STATE,
-        ...parsed,
-        settings: { ...DEFAULT_STATE.settings, ...parsed.settings }
-      };
-    }
-    return DEFAULT_STATE;
-  });
+  const [session, setSession] = useState<any | null>(null);
+  const [initializing, setInitializing] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [dbStatus, setDbStatus] = useState<'connecting' | 'connected' | 'error' | 'empty'>('connecting');
+  const [state, setState] = useState<GlobalState>(DEFAULT_STATE);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [custs, vends, accounts, hotels, trans, tickets, visas, rects, ledger] = await Promise.all([
+        supabase.from('customers').select('*'),
+        supabase.from('vendors').select('*'),
+        supabase.from('chart_of_accounts').select('*'),
+        supabase.from('hotel_vouchers').select('*'),
+        supabase.from('transport_vouchers').select('*'),
+        supabase.from('ticket_vouchers').select('*'),
+        supabase.from('visa_vouchers').select('*'),
+        supabase.from('receipts').select('*'),
+        supabase.from('ledger_entries').select('*')
+      ]);
+
+      const mappedAccounts: Account[] = (accounts.data || []).map((a: any) => ({
+        id: a.account_code.startsWith('100') ? `acc-${a.account_code.slice(-1)}` : a.id,
+        code: a.account_code, title: a.account_name, type: a.account_type as any, isSystem: a.is_system_generated, dbId: a.id
+      }));
+
+      const transform = (v: any, type: any): Voucher => ({
+        ...v, id: v.id, voucherNo: v.voucher_no || v.receipt_no, date: v.voucher_date || v.receipt_date, type, status: v.status || 'Posted',
+        totalAmount: Number(v.total_sale_pkr || v.amount_pkr || 0), roe: Number(v.roe || 1), buyPrice: Number(v.buy_rate_sar || v.net_buy_pkr || 0), salePrice: Number(v.sale_rate_sar || 0),
+        passengerName: v.passenger_name, hotelProperty: v.hotel_name,
+        entries: (ledger.data || []).filter((le: any) => le.reference_id === v.id).map((le: any) => ({
+          id: le.id, accountId: mappedAccounts.find(ma => ma.dbId === le.account_id)?.id || le.account_id,
+          debit: Number(le.debit || 0), credit: Number(le.credit || 0),
+          customerId: le.account_id === mappedAccounts.find(m => m.code === '1003')?.dbId ? le.party_id : undefined,
+          vendorId: le.account_id === mappedAccounts.find(m => m.code === '2001')?.dbId ? le.party_id : undefined,
+          description: le.narration
+        }))
+      });
+
+      const allVouchers: Voucher[] = [
+        ...(hotels.data || []).map(v => transform(v, 'Hotel')),
+        ...(trans.data || []).map(v => transform(v, 'Transport')),
+        ...(tickets.data || []).map(v => transform(v, 'Ticket')),
+        ...(visas.data || []).map(v => transform(v, 'Visa')),
+        ...(rects.data || []).map(v => transform(v, 'Receipt'))
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      // FIX: Added missing email and address properties to Customer and Vendor mappings to resolve TypeScript error on line 240
+      setState(prev => ({
+        ...prev, accounts: mappedAccounts, vouchers: allVouchers,
+        customers: (custs.data || []).map((c: any) => ({ 
+          id: c.id, 
+          code: c.customer_code, 
+          name: c.name, 
+          phone: c.phone, 
+          email: c.email || '', 
+          address: c.address || '', 
+          city: c.city, 
+          openingBalance: Number(c.opening_balance), 
+          openingBalanceType: 'Receivable', 
+          isActive: c.is_active, 
+          status: 'Active & Visible' 
+        })),
+        vendors: (vends.data || []).map((v: any) => ({ 
+          id: v.id, 
+          code: v.vendor_code, 
+          name: v.vendor_name, 
+          phone: v.phone, 
+          email: v.email || '', 
+          address: v.address || '', 
+          city: v.city, 
+          openingBalance: Number(v.opening_balance), 
+          openingBalanceType: 'Payable', 
+          isActive: v.is_active, 
+          status: 'Active & Visible' 
+        }))
+      }));
+      setDbStatus('connected');
+    } catch (e) { setDbStatus('error'); } finally { setLoading(false); }
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
-
-  const toggleTheme = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      settings: { ...prev.settings, theme: prev.settings.theme === 'light' ? 'dark' : 'light' }
-    }));
+    supabase.auth.getSession().then(({ data: { session } }) => { setSession(session); setInitializing(false); });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setSession(session));
+    return () => subscription.unsubscribe();
   }, []);
 
-  const toggleCompact = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      settings: { ...prev.settings, compactView: !prev.settings.compactView }
-    }));
-  }, []);
+  useEffect(() => { if (session) fetchData(); }, [session, fetchData]);
 
-  const addVoucher = useCallback((v: Voucher) => {
-    setState(prev => ({ ...prev, vouchers: [v, ...prev.vouchers] }));
-  }, []);
+  const addVoucher = async (v: Voucher) => {
+    setLoading(true);
+    try {
+      const getP = (pId: string | undefined, list: any[]) => pId?.length && pId.length > 20 ? pId : list.find(x => x.id === pId)?.id || null;
+      const cId = getP(v.entries.find(e => e.customerId)?.customerId, state.customers);
+      const vId = getP(v.entries.find(e => e.vendorId)?.vendorId, state.vendors);
 
-  const deleteVoucher = useCallback((id: string) => {
-    if (!window.confirm("Are you sure you want to delete this voucher? This will affect ledgers.")) return;
-    setState(prev => ({ ...prev, vouchers: prev.vouchers.filter(v => v.id !== id) }));
-  }, []);
+      let payload: any = { voucher_no: v.voucherNo, voucher_date: v.date, customer_id: cId, vendor_id: vId, roe: v.roe };
+      let table = '';
 
-  const cloneVoucher = useCallback((id: string) => {
-    setState(prev => {
-      const original = prev.vouchers.find(v => v.id === id);
-      if (!original) return prev;
-      const cloned: Voucher = {
-        ...original,
-        id: generateId(),
-        voucherNo: `V-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
-        date: new Date().toISOString().split('T')[0],
-        status: 'Draft',
-        createdAt: new Date().toISOString(),
-        entries: original.entries.map(e => ({ ...e, id: generateId() }))
-      };
-      return { ...prev, vouchers: [cloned, ...prev.vouchers] };
-    });
-  }, []);
+      if (v.type === 'Hotel') { table = 'hotel_vouchers'; payload = { ...payload, hotel_name: v.hotelProperty, passenger_name: v.passengerName, check_in: v.checkIn, check_out: v.checkOut, rooms: v.rooms, buy_rate_sar: v.buyPrice, sale_rate_sar: v.salePrice }; }
+      else if (v.type === 'Transport') { table = 'transport_vouchers'; payload = { ...payload, route: v.route, vehicle_type: v.transportType, amount_sar: v.salePrice }; }
+      else if (v.type === 'Ticket') { table = 'ticket_vouchers'; payload = { ...payload, passenger_name: v.passengerName, airline_name: v.airlineName, ticket_no: v.ticketNumber, gds_pnr: v.gdsPnr, base_fare_pkr: v.baseFare, tax_pkr: v.taxes, service_fee_pkr: v.serviceFee, net_buy_pkr: v.buyPrice }; }
+      else if (v.type === 'Visa') { table = 'visa_vouchers'; payload = { ...payload, passenger_name: v.passengerName, country: v.country, visa_type: v.visaType, buy_rate_pkr: v.buyPrice, sale_rate_pkr: v.salePrice }; }
+      else if (v.type === 'Receipt') { table = 'receipts'; payload = { receipt_no: v.voucherNo, receipt_date: v.date, customer_id: cId, vendor_id: vId, deposit_account_id: state.accounts.find(a => a.id === v.entries[0].accountId)?.dbId || v.entries[0].accountId, amount_pkr: v.totalAmount, narration: v.description }; }
 
-  const cloneCustomer = useCallback((id: string) => {
-    setState(prev => {
-      const original = prev.customers.find(c => c.id === id);
-      if (!original) return prev;
-      const cloned: Customer = {
-        ...original,
-        id: generateId(),
-        code: `C-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
-        name: `${original.name} (Copy)`,
-      };
-      return { ...prev, customers: [...prev.customers, cloned] };
-    });
-  }, []);
+      const { error } = v.id.length > 20 ? await supabase.from(table).update(payload).eq('id', v.id) : await supabase.from(table).insert(payload);
+      if (error) throw error;
+      await fetchData();
+    } catch (err: any) { alert(err.message); } finally { setLoading(false); }
+  };
 
-  const cloneVendor = useCallback((id: string) => {
-    setState(prev => {
-      const original = prev.vendors.find(v => v.id === id);
-      if (!original) return prev;
-      const cloned: Vendor = {
-        ...original,
-        id: generateId(),
-        code: `V-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
-        name: `${original.name} (Copy)`,
-      };
-      return { ...prev, vendors: [...prev.vendors, cloned] };
-    });
-  }, []);
+  const deleteVoucher = async (id: string) => {
+    if (!window.confirm("Permanent delete? Ledger history will be cleaned.")) return;
+    setLoading(true);
+    try {
+      const v = state.vouchers.find(x => x.id === id);
+      const tableMap: any = { Hotel: 'hotel_vouchers', Transport: 'transport_vouchers', Ticket: 'ticket_vouchers', Visa: 'visa_vouchers', Receipt: 'receipts' };
+      if (v) await supabase.from(tableMap[v.type]).delete().eq('id', id);
+      await fetchData();
+    } catch (e) { alert("Delete failed"); } finally { setLoading(false); }
+  };
 
-  const deleteCustomer = useCallback((id: string) => {
-    if (!window.confirm("Delete this customer? Transactions will still refer to this ID but the customer will be removed from masters.")) return;
-    setState(prev => ({ ...prev, customers: prev.customers.filter(c => c.id !== id) }));
-  }, []);
+  const upsertCustomer = async (c: Partial<Customer>) => {
+    setLoading(true);
+    // FIX: Added email and address to the payload object to ensure consistency with Customer type
+    const p = { 
+      customer_code: c.code, 
+      name: c.name, 
+      phone: c.phone, 
+      email: c.email || '', 
+      address: c.address || '', 
+      city: c.city, 
+      opening_balance: c.openingBalance, 
+      is_active: c.isActive 
+    };
+    const { error } = c.id && c.id.length > 20 ? await supabase.from('customers').update(p).eq('id', c.id) : await supabase.from('customers').insert(p);
+    if (error) alert(error.message);
+    await fetchData();
+  };
 
-  const deleteVendor = useCallback((id: string) => {
-    if (!window.confirm("Delete this vendor?")) return;
-    setState(prev => ({ ...prev, vendors: prev.vendors.filter(v => v.id !== id) }));
-  }, []);
-
-  const deleteAccount = useCallback((id: string) => {
-    if (!window.confirm("Delete this account head?")) return;
-    setState(prev => ({ ...prev, accounts: prev.accounts.filter(a => a.id !== id) }));
-  }, []);
+  const upsertVendor = async (v: Partial<Vendor>) => {
+    setLoading(true);
+    // FIX: Added email and address to the payload object to ensure consistency with Vendor type
+    const p = { 
+      vendor_code: v.code, 
+      vendor_name: v.name, 
+      phone: v.phone, 
+      email: v.email || '', 
+      address: v.address || '', 
+      city: v.city, 
+      opening_balance: v.openingBalance, 
+      is_active: v.isActive 
+    };
+    const { error } = v.id && v.id.length > 20 ? await supabase.from('vendors').update(p).eq('id', v.id) : await supabase.from('vendors').insert(p);
+    if (error) alert(error.message);
+    await fetchData();
+  };
 
   const value = useMemo(() => ({ 
-    state, 
-    setState, 
-    addVoucher, 
-    deleteVoucher, 
-    cloneVoucher, 
-    cloneCustomer, 
-    cloneVendor,
-    deleteCustomer,
-    deleteVendor,
-    deleteAccount,
-    toggleTheme,
-    toggleCompact
-  }), [state, addVoucher, deleteVoucher, cloneVoucher, cloneCustomer, cloneVendor, deleteCustomer, deleteVendor, deleteAccount, toggleTheme, toggleCompact]);
+    state, setState, session, loading, dbStatus, logout: () => supabase.auth.signOut(), refreshData: fetchData, addVoucher, deleteVoucher, upsertCustomer, upsertVendor,
+    deleteCustomer: async (id: string) => { if(window.confirm("Delete client?")) { await supabase.from('customers').delete().eq('id', id); fetchData(); } },
+    deleteVendor: async (id: string) => { if(window.confirm("Delete supplier?")) { await supabase.from('vendors').delete().eq('id', id); fetchData(); } },
+    deleteAccount: async (id: string) => { if(window.confirm("Delete account head?")) { await supabase.from('chart_of_accounts').delete().eq('id', id); fetchData(); } },
+    toggleTheme: () => setState(p => ({ ...p, settings: { ...p.settings, theme: p.settings.theme === 'light' ? 'dark' : 'light' } })),
+    toggleCompact: () => setState(p => ({ ...p, settings: { ...p.settings, compactView: !p.settings.compactView } })),
+    enterGuestMode: () => setSession({ user: { email: 'demo@hashmi.core' } } as any)
+  }), [state, session, loading, dbStatus, fetchData]);
+
+  if (initializing) return <div className="min-h-screen flex flex-col items-center justify-center bg-[#0B1120]"><div className="w-12 h-12 border-4 border-sky-500/20 border-t-sky-500 rounded-full animate-spin mb-4"></div></div>;
 
   return (
     <AppContext.Provider value={value}>
       <HashRouter>
-        <Layout>
-          <Routes>
-            <Route index element={<Dashboard />} />
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/accounts" element={<Accounts />} />
-            <Route path="/customers" element={<CustomerList />} />
-            <Route path="/vendors" element={<VendorList />} />
-            <Route path="/vouchers" element={<VoucherList />} />
-            <Route path="/vouchers/view/:id" element={<VoucherDetail />} />
-            <Route path="/vouchers/new" element={<VoucherEntryPage />} />
-            <Route path="/vouchers/edit/:id" element={<VoucherEntryPage />} />
-            <Route path="/ledger/:type/:id" element={<LedgerView />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Layout>
+        {!session ? <Routes><Route path="*" element={<Login />} /></Routes> : (
+          <Layout>
+            <Routes>
+              <Route index element={<Dashboard />} />
+              <Route path="/accounts" element={<Accounts />} />
+              <Route path="/customers" element={<CustomerList />} />
+              <Route path="/vendors" element={<VendorList />} />
+              <Route path="/vouchers" element={<VoucherList />} />
+              <Route path="/vouchers/view/:id" element={<VoucherDetail />} />
+              <Route path="/vouchers/new" element={<VoucherEntryPage />} />
+              <Route path="/vouchers/edit/:id" element={<VoucherEntryPage />} />
+              <Route path="/ledger/:type/:id" element={<LedgerView />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Layout>
+        )}
       </HashRouter>
     </AppContext.Provider>
   );

@@ -25,22 +25,35 @@ const StatCard = ({ title, value, subValue, icon, color, trend, compact }: { tit
 );
 
 const Dashboard: React.FC = () => {
-  const { state } = useApp();
+  const { state, refreshData } = useApp();
   const { compactView } = state.settings;
 
   const metrics = useMemo(() => {
     const cash = calculateAccountBalance('acc-1', state.vouchers, 0);
     const bank = calculateAccountBalance('acc-2', state.vouchers, 0);
     
+    // Correct logic: Calculate balance per customer and sum them up
     let totalReceivables = 0;
     state.customers.forEach(c => {
-      const bal = calculateAccountBalance('acc-3', state.vouchers, c.openingBalanceType === 'Receivable' ? c.openingBalance : -c.openingBalance, 'Debit');
+      const bal = calculateAccountBalance(
+        'acc-3', 
+        state.vouchers, 
+        c.openingBalanceType === 'Receivable' ? c.openingBalance : -c.openingBalance, 
+        'Debit',
+        c.id // Filter by specific party
+      );
       if (bal > 0) totalReceivables += bal;
     });
 
     let totalPayables = 0;
     state.vendors.forEach(v => {
-      const bal = calculateAccountBalance('acc-5', state.vouchers, v.openingBalanceType === 'Payable' ? v.openingBalance : -v.openingBalance, 'Credit');
+      const bal = calculateAccountBalance(
+        'acc-5', 
+        state.vouchers, 
+        v.openingBalanceType === 'Payable' ? v.openingBalance : -v.openingBalance, 
+        'Credit',
+        v.id // Filter by specific party
+      );
       if (bal > 0) totalPayables += bal;
     });
 
@@ -56,6 +69,8 @@ const Dashboard: React.FC = () => {
       netProfit: income - expenses
     };
   }, [state.vouchers, state.customers, state.vendors, state.accounts]);
+
+  const isEmpty = state.vouchers.length === 0 && state.customers.length === 0 && state.vendors.length === 0;
 
   return (
     <div className={`${compactView ? 'space-y-6' : 'space-y-10'} animate-in fade-in duration-700 pb-20`}>
@@ -78,6 +93,29 @@ const Dashboard: React.FC = () => {
            </Link>
         </div>
       </div>
+
+      {isEmpty && (
+        <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/20 rounded-[2.5rem] p-12 text-center animate-in zoom-in-95 duration-500">
+           <div className="w-20 h-20 bg-amber-100 dark:bg-amber-900/30 rounded-3xl flex items-center justify-center mx-auto mb-6 text-amber-600">
+              <i className="fa-solid fa-database text-3xl"></i>
+           </div>
+           <h2 className="text-xl font-black text-amber-900 dark:text-amber-400 uppercase tracking-tighter mb-2">Database Empty or Disconnected</h2>
+           <p className="text-sm font-bold text-amber-800 dark:text-amber-500/80 max-w-lg mx-auto mb-8 uppercase tracking-widest leading-relaxed">
+             No records found in the cloud ledger. Please ensure you have run the <code className="bg-white dark:bg-slate-800 px-2 py-0.5 rounded">schema.sql</code> script in your Supabase SQL Editor.
+           </p>
+           <div className="flex flex-wrap justify-center gap-4">
+              <button 
+                onClick={() => refreshData()}
+                className="bg-amber-600 hover:bg-amber-500 text-white px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all"
+              >
+                <i className="fa-solid fa-arrows-rotate mr-2"></i> Retry Sync
+              </button>
+              <Link to="/settings" className="bg-slate-900 text-white px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all">
+                Check Settings
+              </Link>
+           </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
         <StatCard compact={compactView} title="Liquid Assets" value={`Rs. ${metrics.cashBank.toLocaleString()}`} subValue="Cash & Bank Balances" icon="fa-wallet" color="bg-emerald-500" trend="+12%" />
