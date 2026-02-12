@@ -1,4 +1,3 @@
-
 import React, { useMemo } from 'react';
 import { useApp } from '../App';
 import { formatCurrency, calculateAccountBalance } from '../utils/accounting';
@@ -26,81 +25,52 @@ const StatCard = ({ title, value, subValue, icon, color, trend, compact }: { tit
 );
 
 const Dashboard: React.FC = () => {
-  const { state, dbStatus, missingTables } = useApp();
+  const { state, refreshData } = useApp();
   const { compactView } = state.settings;
 
   const metrics = useMemo(() => {
-    const cash = calculateAccountBalance('1001', state);
-    const bank = calculateAccountBalance('1002', state);
+    const cash = calculateAccountBalance('acc-1', state.vouchers, 0);
+    const bank = calculateAccountBalance('acc-2', state.vouchers, 0);
     
+    // Correct logic: Calculate balance per customer and sum them up
     let totalReceivables = 0;
-    let totalPayables = 0;
-    let vendorAdvances = 0;
-    let customerAdvances = 0;
-
     state.customers.forEach(c => {
-      const net = calculateAccountBalance('1003', state, c.id);
-      if (net > 0) totalReceivables += net;
-      else customerAdvances += Math.abs(net);
+      const bal = calculateAccountBalance(
+        'acc-3', 
+        state.vouchers, 
+        c.openingBalanceType === 'Receivable' ? c.openingBalance : -c.openingBalance, 
+        'Debit',
+        c.id // Filter by specific party
+      );
+      if (bal > 0) totalReceivables += bal;
     });
 
+    let totalPayables = 0;
     state.vendors.forEach(v => {
-      const net = calculateAccountBalance('2001', state, v.id);
-      if (net < 0) totalPayables += Math.abs(net);
-      else vendorAdvances += net;
+      const bal = calculateAccountBalance(
+        'acc-5', 
+        state.vouchers, 
+        v.openingBalanceType === 'Payable' ? v.openingBalance : -v.openingBalance, 
+        'Credit',
+        v.id // Filter by specific party
+      );
+      if (bal > 0) totalPayables += bal;
     });
 
-    const income = state.accounts.filter(a => a.type === 'Income').reduce((s, a) => {
-      const bal = calculateAccountBalance(a.id, state);
-      return s + (bal < 0 ? Math.abs(bal) : 0);
-    }, 0);
-
-    const expenses = state.accounts.filter(a => a.type === 'Expense').reduce((s, a) => {
-      const bal = calculateAccountBalance(a.id, state);
-      return s + (bal > 0 ? bal : 0);
-    }, 0);
+    const income = state.accounts.filter(a => a.type === 'Income').reduce((s, a) => s + calculateAccountBalance(a.id, state.vouchers, 0, 'Credit'), 0);
+    const expenses = state.accounts.filter(a => a.type === 'Expense').reduce((s, a) => s + calculateAccountBalance(a.id, state.vouchers, 0, 'Debit'), 0);
 
     return { 
-      liquidAssets: cash + bank + vendorAdvances, 
+      cashBank: cash + bank, 
       receivables: totalReceivables, 
-      payables: totalPayables + customerAdvances, 
+      payables: totalPayables, 
       income, 
       expenses,
       netProfit: income - expenses
     };
-  }, [state]);
+  }, [state.vouchers, state.customers, state.vendors, state.accounts]);
 
-  if (dbStatus === 'missing_tables') {
-    return (
-      <div className="min-h-[80vh] flex items-center justify-center p-8 animate-in fade-in zoom-in duration-500">
-        <div className="max-w-2xl bg-white dark:bg-slate-900 rounded-[3rem] p-12 shadow-2xl border border-rose-100 dark:border-rose-900/20 text-center space-y-8">
-          <div className="w-24 h-24 bg-rose-500 rounded-3xl flex items-center justify-center text-white text-4xl mx-auto shadow-xl shadow-rose-500/20">
-            <i className="fa-solid fa-database"></i>
-          </div>
-          <div>
-            <h1 className="text-3xl font-black text-slate-900 dark:text-slate-100 uppercase tracking-tighter">Database Schema Mismatch</h1>
-            <p className="text-slate-500 mt-4 font-bold leading-relaxed">
-              Your Supabase database is missing critical tables required for the current version of Hashmi Ledger.
-            </p>
-          </div>
-          <div className="bg-slate-50 dark:bg-slate-800/50 p-8 rounded-2xl text-left space-y-4">
-             <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest">Identified Missing Tables:</p>
-             <ul className="grid grid-cols-2 gap-2">
-                {missingTables.map(t => (
-                  <li key={t} className="flex items-center gap-2 text-xs font-black text-slate-700 dark:text-slate-300">
-                    <i className="fa-solid fa-circle-exclamation text-rose-400"></i> {t}
-                  </li>
-                ))}
-             </ul>
-          </div>
-          <div className="pt-4 flex flex-col items-center gap-4">
-            <Link to="/settings" className="bg-[#0B1120] dark:bg-sky-600 text-white px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:scale-105 transition-all">Go to SQL Setup</Link>
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Navigate to Settings &gt; Database Setup to view the SQL script</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const isEmpty = state.vouchers.length === 0 && state.customers.length === 0 && state.vendors.length === 0;
 
   return (
     <div className={`${compactView ? 'space-y-6' : 'space-y-10'} animate-in fade-in duration-700 pb-20`}>
@@ -124,10 +94,33 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
+      {isEmpty && (
+        <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/20 rounded-[2.5rem] p-12 text-center animate-in zoom-in-95 duration-500">
+           <div className="w-20 h-20 bg-amber-100 dark:bg-amber-900/30 rounded-3xl flex items-center justify-center mx-auto mb-6 text-amber-600">
+              <i className="fa-solid fa-database text-3xl"></i>
+           </div>
+           <h2 className="text-xl font-black text-amber-900 dark:text-amber-400 uppercase tracking-tighter mb-2">Database Empty or Disconnected</h2>
+           <p className="text-sm font-bold text-amber-800 dark:text-amber-500/80 max-w-lg mx-auto mb-8 uppercase tracking-widest leading-relaxed">
+             No records found in the cloud ledger. Please ensure you have run the <code className="bg-white dark:bg-slate-800 px-2 py-0.5 rounded">schema.sql</code> script in your Supabase SQL Editor.
+           </p>
+           <div className="flex flex-wrap justify-center gap-4">
+              <button 
+                onClick={() => refreshData()}
+                className="bg-amber-600 hover:bg-amber-500 text-white px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all"
+              >
+                <i className="fa-solid fa-arrows-rotate mr-2"></i> Retry Sync
+              </button>
+              <Link to="/settings" className="bg-slate-900 text-white px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all">
+                Check Settings
+              </Link>
+           </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-        <StatCard compact={compactView} title="Liquid Assets" value={`Rs. ${metrics.liquidAssets.toLocaleString()}`} subValue="Cash, Bank & Advances" icon="fa-wallet" color="bg-emerald-500" trend="+12%" />
-        <StatCard compact={compactView} title="Total Receivables" value={`Rs. ${metrics.receivables.toLocaleString()}`} subValue="Customer Debit Balances" icon="fa-hand-holding-dollar" color="bg-sky-500" />
-        <StatCard compact={compactView} title="Total Payables" value={`Rs. ${metrics.payables.toLocaleString()}`} subValue="Vendor & Overpayment Credits" icon="fa-file-invoice" color="bg-rose-500" />
+        <StatCard compact={compactView} title="Liquid Assets" value={`Rs. ${metrics.cashBank.toLocaleString()}`} subValue="Cash & Bank Balances" icon="fa-wallet" color="bg-emerald-500" trend="+12%" />
+        <StatCard compact={compactView} title="Total Receivables" value={`Rs. ${metrics.receivables.toLocaleString()}`} subValue="Customer Outstanding" icon="fa-hand-holding-dollar" color="bg-sky-500" />
+        <StatCard compact={compactView} title="Total Payables" value={`Rs. ${metrics.payables.toLocaleString()}`} subValue="Vendor Liabilities" icon="fa-file-invoice" color="bg-rose-500" />
         <StatCard compact={compactView} title="Total Income" value={`Rs. ${metrics.income.toLocaleString()}`} subValue="Gross Service Revenue" icon="fa-chart-pie" color="bg-indigo-600" trend="+5%" />
       </div>
 

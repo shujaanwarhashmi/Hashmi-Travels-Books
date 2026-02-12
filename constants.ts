@@ -14,8 +14,6 @@ export const INITIAL_ACCOUNTS: Account[] = [
   { id: 'acc-10', code: '3001', title: 'CAPITAL ACCOUNT', type: 'Equity' },
   { id: 'acc-11', code: '4003', title: 'AIR TICKET INCOME', type: 'Income' },
   { id: 'acc-12', code: '4004', title: 'VISA SERVICE INCOME', type: 'Income' },
-  { id: 'acc-13', code: '3002', title: 'GENERAL RESERVE', type: 'Equity' },
-  { id: 'acc-14', code: '3999', title: 'OPENING BALANCE EQUITY', type: 'Equity', isSystem: true },
 ];
 
 export const INITIAL_CUSTOMERS: Customer[] = [
