@@ -1,5 +1,6 @@
+
 -- ======================================================
--- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.1)
+-- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.3)
 -- RECONSTRUCTED FOR CLONING & INTEGRATED DELETIONS
 -- ======================================================
 
@@ -50,7 +51,7 @@ CREATE TABLE customers (
     city TEXT,
     address TEXT,
     opening_balance DECIMAL(15,2) DEFAULT 0,
-    opening_balance_type TEXT DEFAULT 'Receivable', -- Fixed: Added type persistence
+    opening_balance_type TEXT DEFAULT 'Receivable',
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -64,7 +65,7 @@ CREATE TABLE vendors (
     city TEXT,
     address TEXT,
     opening_balance DECIMAL(15,2) DEFAULT 0,
-    opening_balance_type TEXT DEFAULT 'Payable', -- Fixed: Added type persistence
+    opening_balance_type TEXT DEFAULT 'Payable',
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -115,6 +116,7 @@ CREATE TABLE ticket_vouchers (
     airline_name TEXT,
     ticket_no TEXT,
     gds_pnr TEXT,
+    roe DECIMAL(10,4) DEFAULT 1.0,
     base_fare_pkr DECIMAL(15,2),
     tax_pkr DECIMAL(15,2),
     service_fee_pkr DECIMAL(15,2),
@@ -132,6 +134,7 @@ CREATE TABLE visa_vouchers (
     passenger_name TEXT,
     country TEXT,
     visa_type TEXT,
+    roe DECIMAL(10,4) DEFAULT 1.0,
     buy_rate_pkr DECIMAL(15,2),
     sale_rate_pkr DECIMAL(15,2),
     expiry_date DATE,
@@ -145,6 +148,7 @@ CREATE TABLE receipts (
     customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
     vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
     deposit_account_id UUID REFERENCES chart_of_accounts(id) ON DELETE RESTRICT,
+    roe DECIMAL(10,4) DEFAULT 1.0,
     amount_pkr DECIMAL(15,2) NOT NULL,
     narration TEXT
 );
@@ -199,6 +203,26 @@ BEGIN
         VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.amount_pkr, v_narration);
         INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
         VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, NEW.amount_pkr, 'Income: ' || v_narration);
+
+    ELSIF TG_TABLE_NAME = 'ticket_vouchers' THEN
+        SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4003' LIMIT 1;
+        v_narration := 'Ticket: ' || COALESCE(NEW.airline_name, 'Flight') || ' - ' || COALESCE(NEW.passenger_name, 'Pax');
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
+        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.total_sale_pkr, v_narration);
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.net_buy_pkr, 'Cost: ' || v_narration);
+        INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.total_sale_pkr - NEW.net_buy_pkr), 'Margin: ' || v_narration);
+
+    ELSIF TG_TABLE_NAME = 'visa_vouchers' THEN
+        SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4004' LIMIT 1;
+        v_narration := 'Visa: ' || COALESCE(NEW.visa_type, 'Case') || ' - ' || COALESCE(NEW.passenger_name, 'Pax');
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
+        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.sale_rate_pkr, v_narration);
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.buy_rate_pkr, 'Cost: ' || v_narration);
+        INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.sale_rate_pkr - NEW.buy_rate_pkr), 'Margin: ' || v_narration);
 
     ELSIF TG_TABLE_NAME = 'receipts' THEN
         v_narration := 'Receipt: ' || COALESCE(NEW.narration, 'Pymt');
