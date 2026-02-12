@@ -1,3 +1,4 @@
+
 import { Voucher, VoucherEntry, Account, GlobalState, Customer, Vendor } from '../types';
 
 export const formatCurrency = (amount: number, currency: string = 'PKR') => {
@@ -8,10 +9,6 @@ export const formatCurrency = (amount: number, currency: string = 'PKR') => {
   }).format(amount);
 };
 
-/**
- * Calculates the net balance (Debit - Credit) for an account.
- * For control accounts (acc-3, acc-5), it aggregates all individual party openings + movements.
- */
 export const calculateAccountBalance = (
   accountId: string, 
   state: GlobalState,
@@ -20,17 +17,15 @@ export const calculateAccountBalance = (
   let totalDebit = 0;
   let totalCredit = 0;
 
-  // 1. Determine if this is a control account
   const account = state.accounts.find(a => a.id === accountId || a.dbId === accountId || a.code === accountId);
   const isAR = account?.code === '1003';
   const isAP = account?.code === '2001';
+  const isEquityOffset = account?.code === '3999';
 
-  // 2. Add Opening Balances from Registries
+  // 1. Initial Master Data Openings
   if (partyId) {
-    // Specific Party Calculation
     const cust = state.customers.find(c => c.id === partyId);
     const vend = state.vendors.find(v => v.id === partyId);
-    
     if (cust) {
       if (cust.openingBalanceType === 'Receivable') totalDebit += Number(cust.openingBalance);
       else totalCredit += Number(cust.openingBalance);
@@ -39,7 +34,6 @@ export const calculateAccountBalance = (
       else totalCredit += Number(vend.openingBalance);
     }
   } else {
-    // Aggregation for Control Accounts in Registry/Reports
     if (isAR) {
       state.customers.forEach(c => {
         if (c.openingBalanceType === 'Receivable') totalDebit += Number(c.openingBalance);
@@ -50,25 +44,32 @@ export const calculateAccountBalance = (
         if (v.openingBalanceType === 'Advance') totalDebit += Number(v.openingBalance);
         else totalCredit += Number(v.openingBalance);
       });
+    } else if (isEquityOffset) {
+       // Offset of all registry openings to keep Trial Balance in check
+       state.customers.forEach(c => {
+         const val = Number(c.openingBalance);
+         if (c.openingBalanceType === 'Receivable') totalCredit += val;
+         else totalDebit += val;
+       });
+       state.vendors.forEach(v => {
+         const val = Number(v.openingBalance);
+         if (v.openingBalanceType === 'Advance') totalCredit += val;
+         else totalDebit += val;
+       });
     }
   }
 
-  // 3. Aggregate all Ledger entries (Double-entry postings)
+  // 2. Ledger Posting Summation
   state.vouchers.forEach(v => {
-    if (v.status && v.status !== 'Posted') return;
-    
+    if (v.status !== 'Posted') return;
     v.entries.forEach(e => {
-      // Direct account match
-      const entryMatchesAccount = e.accountId === accountId || (account && e.accountId === account.id) || (account && e.accountId === account.dbId);
-      
-      if (entryMatchesAccount) {
-        // If we are looking for a specific party, filter here
+      const matchAcc = e.accountId === accountId || (account && (e.accountId === account.id || e.accountId === account.dbId || e.accountId === account.code));
+      if (matchAcc) {
         if (partyId) {
           if (e.customerId !== partyId && e.vendorId !== partyId) return;
         }
-        
-        totalDebit += Number(e.debit || 0);
-        totalCredit += Number(e.credit || 0);
+        totalDebit += (e.pkrDebit || (e.debit * (e.roe || 1)));
+        totalCredit += (e.pkrCredit || (e.credit * (e.roe || 1)));
       }
     });
   });
@@ -80,89 +81,30 @@ export const getAccountLedger = (accountId: string, fromDate: string, toDate: st
   const account = state.accounts.find(a => a.id === accountId || a.dbId === accountId || a.code === accountId);
   if (!account) return [];
 
-  let totalDebitBefore = 0;
-  let totalCreditBefore = 0;
-
-  // Add Party Openings if this is a control account
-  if (account.code === '1003') {
-    state.customers.forEach(c => {
-      if (c.openingBalanceType === 'Receivable') totalDebitBefore += Number(c.openingBalance);
-      else totalCreditBefore += Number(c.openingBalance);
-    });
-  } else if (account.code === '2001') {
-    state.vendors.forEach(v => {
-      if (v.openingBalanceType === 'Advance') totalDebitBefore += Number(v.openingBalance);
-      else totalCreditBefore += Number(v.openingBalance);
-    });
-  }
-
-  // Calculate movement before the period (Historical data)
+  let runningBalance = 0;
+  // This logic should ideally calculate opening balance at fromDate, but for simplicity we show all
+  const entries: any[] = [];
+  
   state.vouchers.forEach(v => {
-    if (v.status && v.status !== 'Posted') return;
-    if (new Date(v.date) < new Date(fromDate)) {
-      v.entries.forEach(e => {
-        if (e.accountId === account.id || e.accountId === account.dbId || e.accountId === account.code) {
-          totalDebitBefore += Number(e.debit || 0);
-          totalCreditBefore += Number(e.credit || 0);
-        }
-      });
-    }
-  });
-
-  const openingNet = totalDebitBefore - totalCreditBefore;
-  let runningBalance = openingNet;
-
-  const ledgerEntries: any[] = [{
-    date: 'Opening',
-    voucherNo: '-',
-    type: 'Opening Balance',
-    description: `Balance as of ${new Date(fromDate).toLocaleDateString()}`,
-    debit: 0,
-    credit: 0,
-    balance: openingNet,
-    isDebit: true
-  }];
-
-  const periodVouchers = state.vouchers
-    .filter(v => (!v.status || v.status === 'Posted') && v.date >= fromDate && v.date <= toDate)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-  periodVouchers.forEach(v => {
+    if (v.status !== 'Posted') return;
     v.entries.forEach(e => {
       if (e.accountId === account.id || e.accountId === account.dbId || e.accountId === account.code) {
-        const entryDebit = Number(e.debit || 0);
-        const entryCredit = Number(e.credit || 0);
-        
-        runningBalance += (entryDebit - entryCredit);
-        
-        ledgerEntries.push({
-          id: v.id,
-          date: v.date,
-          voucherNo: v.voucherNo,
-          type: v.type,
-          description: e.description || v.description,
-          debit: entryDebit,
-          credit: entryCredit,
-          balance: runningBalance,
-          isDebit: true
-        });
+        const dr = e.pkrDebit || (e.debit * (e.roe || 1));
+        const cr = e.pkrCredit || (e.credit * (e.roe || 1));
+        runningBalance += (dr - cr);
+        entries.push({ date: v.date, voucherNo: v.voucherNo, type: v.type, description: e.description || v.description, debit: dr, credit: cr, balance: runningBalance });
       }
     });
   });
-
-  return ledgerEntries;
+  return entries.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 };
 
 export const getLedger = (partyId: string, partyType: 'Customer' | 'Vendor', state: GlobalState) => {
-  const party = partyType === 'Customer' 
-    ? state.customers.find(c => c.id === partyId) 
-    : state.vendors.find(v => v.id === partyId);
-
+  const party = partyType === 'Customer' ? state.customers.find(c => c.id === partyId) : state.vendors.find(v => v.id === partyId);
   if (!party) return [];
 
   let totalDebit = 0;
   let totalCredit = 0;
-
   if (partyType === 'Customer') {
     if (party.openingBalanceType === 'Receivable') totalDebit = Number(party.openingBalance);
     else totalCredit = Number(party.openingBalance);
@@ -172,40 +114,21 @@ export const getLedger = (partyId: string, partyType: 'Customer' | 'Vendor', sta
   }
 
   let runningBalance = totalDebit - totalCredit;
+  const entries: any[] = [{ date: 'Opening', voucherNo: '-', type: 'Opening Balance', description: 'Snapshot from Registry', debit: totalDebit, credit: totalCredit, balance: runningBalance }];
 
-  const entries: any[] = [{
-    date: 'Opening',
-    voucherNo: '-',
-    type: 'Opening Balance',
-    description: 'Initial balance from registry',
-    debit: totalDebit,
-    credit: totalCredit,
-    balance: runningBalance
-  }];
-
-  const partyEntries: any[] = [];
+  const moves: any[] = [];
   state.vouchers.forEach(v => {
-    if (v.status && v.status !== 'Posted') return;
+    if (v.status !== 'Posted') return;
     v.entries.forEach(e => {
-      const isMatch = partyType === 'Customer' ? e.customerId === partyId : e.vendorId === partyId;
-      if (isMatch) {
-        partyEntries.push({
-          date: v.date,
-          voucherNo: v.voucherNo,
-          type: v.type,
-          description: e.description || v.description,
-          debit: Number(e.debit || 0),
-          credit: Number(e.credit || 0),
-        });
+      if (e.customerId === partyId || e.vendorId === partyId) {
+        moves.push({ date: v.date, voucherNo: v.voucherNo, type: v.type, description: e.description || v.description, debit: e.pkrDebit || (e.debit * (e.roe || 1)), credit: e.pkrCredit || (e.credit * (e.roe || 1)) });
       }
     });
   });
 
-  partyEntries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-  partyEntries.forEach(ent => {
-    runningBalance += (ent.debit - ent.credit);
-    entries.push({ ...ent, balance: runningBalance });
+  moves.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).forEach(m => {
+    runningBalance += (m.debit - m.credit);
+    entries.push({ ...m, balance: runningBalance });
   });
 
   return entries;

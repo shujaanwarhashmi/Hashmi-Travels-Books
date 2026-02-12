@@ -8,7 +8,6 @@ export interface Account {
   type: AccountType;
   code: string;
   isSystem?: boolean;
-  // dbId is used to store the Supabase UUID for database operations and mapping
   dbId?: string;
 }
 
@@ -43,11 +42,15 @@ export interface Vendor {
 export interface VoucherEntry {
   id: string;
   accountId: string;
-  debit: number;
-  credit: number;
+  debit: number; // Original Currency Amount
+  credit: number; // Original Currency Amount
   customerId?: string;
   vendorId?: string;
   description?: string;
+  currency?: 'SAR' | 'PKR';
+  roe?: number;
+  pkrDebit?: number; // Calculated functional PKR
+  pkrCredit?: number; // Calculated functional PKR
 }
 
 export interface Voucher {
@@ -58,18 +61,16 @@ export interface Voucher {
   description: string;
   currency: 'SAR' | 'PKR';
   roe: number;
-  totalAmount: number;
+  totalAmount: number; // Functional PKR Total
   entries: VoucherEntry[];
   status: 'Draft' | 'Posted';
   createdAt: string;
-  // Transport specific
   transportType?: string;
   route?: string;
   vehicleNo?: string;
   driverName?: string;
   quantity?: number;
   rate?: number;
-  // Hotel specific
   passengerName?: string;
   hotelProperty?: string;
   country?: string;
@@ -80,21 +81,15 @@ export interface Voucher {
   roomBasis?: string;
   salePrice?: number;
   buyPrice?: number;
-  roomType?: string;
-  mealPlan?: string;
-  adults?: number;
-  children?: number;
-  // Air Ticket specific
   airlineName?: string;
   gdsPnr?: string;
   ticketNumber?: string;
   baseFare?: number;
   taxes?: number;
   serviceFee?: number;
-  // Visa specific
   passportNumber?: string;
-  processingStatus?: string;
   visaType?: string;
+  processingStatus?: string;
   expiryDate?: string;
 }
 

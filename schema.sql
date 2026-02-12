@@ -1,6 +1,7 @@
 
 -- ======================================================
--- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.3)
+-- HASHMI TRAVEL BOOKS - MASTER DATABASE (v17.2)
+-- Support for Multi-Line Journal Vouchers
 -- ======================================================
 
 GRANT USAGE ON SCHEMA public TO public;
@@ -9,7 +10,10 @@ GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT USAGE ON SCHEMA public TO postgres;
 
+-- (Tables recreated to ensure consistency)
 DROP TABLE IF EXISTS ledger_entries CASCADE;
+DROP TABLE IF EXISTS journal_voucher_entries CASCADE;
+DROP TABLE IF EXISTS journal_vouchers CASCADE;
 DROP TABLE IF EXISTS hotel_vouchers CASCADE;
 DROP TABLE IF EXISTS transport_vouchers CASCADE;
 DROP TABLE IF EXISTS ticket_vouchers CASCADE;
@@ -18,11 +22,6 @@ DROP TABLE IF EXISTS receipts CASCADE;
 DROP TABLE IF EXISTS vendors CASCADE;
 DROP TABLE IF EXISTS customers CASCADE;
 DROP TABLE IF EXISTS chart_of_accounts CASCADE;
-
-DROP FUNCTION IF EXISTS process_voucher_ledger_post() CASCADE;
-DROP FUNCTION IF EXISTS cleanup_ledger_on_delete() CASCADE;
-DROP TYPE IF EXISTS voucher_status CASCADE;
-DROP TYPE IF EXISTS account_category CASCADE;
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TYPE voucher_status AS ENUM ('Draft', 'Posted', 'Cancelled');
@@ -65,6 +64,29 @@ CREATE TABLE vendors (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE journal_vouchers (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    voucher_no TEXT UNIQUE NOT NULL,
+    voucher_date DATE DEFAULT CURRENT_DATE,
+    total_debit DECIMAL(15,2) DEFAULT 0,
+    total_credit DECIMAL(15,2) DEFAULT 0,
+    narration TEXT,
+    status voucher_status DEFAULT 'Posted',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE journal_voucher_entries (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    journal_id UUID REFERENCES journal_vouchers(id) ON DELETE CASCADE,
+    account_id UUID REFERENCES chart_of_accounts(id) ON DELETE RESTRICT,
+    party_id UUID,
+    currency TEXT DEFAULT 'PKR',
+    roe DECIMAL(15,4) DEFAULT 1,
+    debit DECIMAL(15,2) DEFAULT 0,
+    credit DECIMAL(15,2) DEFAULT 0,
+    description TEXT
+);
+
 CREATE TABLE hotel_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     voucher_no TEXT UNIQUE NOT NULL,
@@ -93,11 +115,11 @@ CREATE TABLE transport_vouchers (
     vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
     route TEXT,
     vehicle_type TEXT,
-    amount_sar DECIMAL(15,2), -- This acts as Sale Rate
-    buy_rate_sar DECIMAL(15,2) DEFAULT 0, -- Added for professional payable tracking
+    amount_sar DECIMAL(15,2),
+    buy_rate_sar DECIMAL(15,2) DEFAULT 0,
     roe DECIMAL(10,4),
-    amount_pkr DECIMAL(15,2) GENERATED ALWAYS AS (amount_sar * roe) STORED, -- Total Sale
-    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (buy_rate_sar * roe) STORED, -- Total Payable to Vendor
+    amount_pkr DECIMAL(15,2) GENERATED ALWAYS AS (amount_sar * roe) STORED,
+    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (buy_rate_sar * roe) STORED,
     remarks TEXT,
     status voucher_status DEFAULT 'Posted'
 );
@@ -159,15 +181,7 @@ CREATE TABLE ledger_entries (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE OR REPLACE FUNCTION cleanup_ledger_on_delete()
-RETURNS TRIGGER AS $$
-BEGIN
-    DELETE FROM ledger_entries WHERE reference_id = OLD.id;
-    RETURN OLD;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION process_voucher_ledger_post()
+CREATE OR REPLACE FUNCTION process_ledger_post()
 RETURNS TRIGGER AS $$
 DECLARE
     v_ar_id UUID; v_ap_id UUID; v_inc_id UUID; v_narration TEXT;
@@ -177,7 +191,14 @@ BEGIN
     
     DELETE FROM ledger_entries WHERE reference_id = NEW.id;
 
-    IF TG_TABLE_NAME = 'hotel_vouchers' THEN
+    IF TG_TABLE_NAME = 'journal_vouchers' THEN
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, credit, narration)
+        SELECT 
+            NEW.voucher_date, account_id, party_id, NEW.id, NEW.voucher_no, (debit * roe), (credit * roe), COALESCE(description, NEW.narration)
+        FROM journal_voucher_entries 
+        WHERE journal_id = NEW.id;
+
+    ELSIF TG_TABLE_NAME = 'hotel_vouchers' THEN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4002' LIMIT 1;
         v_narration := 'Hotel: ' || COALESCE(NEW.hotel_name, 'Stay') || ' - ' || COALESCE(NEW.passenger_name, 'Pax');
         INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
@@ -190,13 +211,10 @@ BEGIN
     ELSIF TG_TABLE_NAME = 'transport_vouchers' THEN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4001' LIMIT 1;
         v_narration := 'Transport: ' || COALESCE(NEW.route, 'Trip');
-        -- DR Customer
         INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
         VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.amount_pkr, v_narration);
-        -- CR Vendor (Payable)
         INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
         VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.total_buy_pkr, 'Cost: ' || v_narration);
-        -- CR Income (Margin)
         INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
         VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.amount_pkr - NEW.total_buy_pkr), 'Income: ' || v_narration);
 
@@ -236,23 +254,34 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_hotel_cleanup AFTER DELETE ON hotel_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
-CREATE TRIGGER trg_transport_cleanup AFTER DELETE ON transport_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
-CREATE TRIGGER trg_ticket_cleanup AFTER DELETE ON ticket_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
-CREATE TRIGGER trg_visa_cleanup AFTER DELETE ON visa_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
-CREATE TRIGGER trg_receipt_cleanup AFTER DELETE ON receipts FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
+CREATE OR REPLACE FUNCTION cleanup_ledger()
+RETURNS TRIGGER AS $$
+BEGIN
+    DELETE FROM ledger_entries WHERE reference_id = OLD.id;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_hotel_post AFTER INSERT OR UPDATE ON hotel_vouchers FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
-CREATE TRIGGER trg_transport_post AFTER INSERT OR UPDATE ON transport_vouchers FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
-CREATE TRIGGER trg_ticket_post AFTER INSERT OR UPDATE ON ticket_vouchers FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
-CREATE TRIGGER trg_visa_post AFTER INSERT OR UPDATE ON visa_vouchers FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
-CREATE TRIGGER trg_receipt_post AFTER INSERT OR UPDATE ON receipts FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
+CREATE TRIGGER trg_jv_cleanup AFTER DELETE ON journal_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger();
+CREATE TRIGGER trg_hotel_cleanup AFTER DELETE ON hotel_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger();
+CREATE TRIGGER trg_transport_cleanup AFTER DELETE ON transport_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger();
+CREATE TRIGGER trg_ticket_cleanup AFTER DELETE ON ticket_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger();
+CREATE TRIGGER trg_visa_cleanup AFTER DELETE ON visa_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger();
+CREATE TRIGGER trg_receipt_cleanup AFTER DELETE ON receipts FOR EACH ROW EXECUTE FUNCTION cleanup_ledger();
+
+CREATE TRIGGER trg_jv_post AFTER INSERT OR UPDATE ON journal_vouchers FOR EACH ROW EXECUTE FUNCTION process_ledger_post();
+CREATE TRIGGER trg_hotel_post AFTER INSERT OR UPDATE ON hotel_vouchers FOR EACH ROW EXECUTE FUNCTION process_ledger_post();
+CREATE TRIGGER trg_transport_post AFTER INSERT OR UPDATE ON transport_vouchers FOR EACH ROW EXECUTE FUNCTION process_ledger_post();
+CREATE TRIGGER trg_ticket_post AFTER INSERT OR UPDATE ON ticket_vouchers FOR EACH ROW EXECUTE FUNCTION process_ledger_post();
+CREATE TRIGGER trg_visa_post AFTER INSERT OR UPDATE ON visa_vouchers FOR EACH ROW EXECUTE FUNCTION process_ledger_post();
+CREATE TRIGGER trg_receipt_post AFTER INSERT OR UPDATE ON receipts FOR EACH ROW EXECUTE FUNCTION process_ledger_post();
 
 INSERT INTO chart_of_accounts (account_code, account_name, account_type, is_system_generated) VALUES
 ('1001', 'CASH IN HAND', 'Cash', true),
 ('1002', 'BANK - MAIN ACCOUNT', 'Bank', true),
 ('1003', 'ACCOUNTS RECEIVABLE', 'Receivable', true),
 ('2001', 'ACCOUNTS PAYABLE', 'Payable', true),
+('3999', 'OPENING BALANCE EQUITY', 'Equity', true),
 ('4001', 'TRANSPORT INCOME', 'Income', false),
 ('4002', 'HOTEL SERVICE INCOME', 'Income', false),
 ('4003', 'AIR TICKET INCOME', 'Income', false),
@@ -263,5 +292,3 @@ ON CONFLICT (account_code) DO NOTHING;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role, public;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role, public;
 GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role, public;
-
-NOTIFY pgrst, 'reload schema';
