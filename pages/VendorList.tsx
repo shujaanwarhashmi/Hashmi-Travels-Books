@@ -48,9 +48,14 @@ const VendorList: React.FC = () => {
 
   const handleSave = async () => {
     if (!formData.name) return alert("Vendor name is required.");
+    
+    // Preserve existing code if editing, otherwise generate new
+    const existingVend = editingId ? state.vendors.find(v => v.id === editingId) : null;
+    const vendorCode = existingVend ? existingVend.code : `V-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
+
     const vendorData: Partial<Vendor> = {
       id: editingId || undefined,
-      code: `V-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
+      code: vendorCode,
       name: formData.name, phone: formData.phone, email: formData.email, address: formData.address, city: formData.city, openingBalance: formData.openingBalance, openingBalanceType: formData.side as any, isActive: formData.status === 'Active & Visible', status: formData.status as any
     };
     await upsertVendor(vendorData);

@@ -1,5 +1,5 @@
 -- ======================================================
--- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.0)
+-- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.1)
 -- RECONSTRUCTED FOR CLONING & INTEGRATED DELETIONS
 -- ======================================================
 
@@ -50,6 +50,7 @@ CREATE TABLE customers (
     city TEXT,
     address TEXT,
     opening_balance DECIMAL(15,2) DEFAULT 0,
+    opening_balance_type TEXT DEFAULT 'Receivable', -- Fixed: Added type persistence
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -63,6 +64,7 @@ CREATE TABLE vendors (
     city TEXT,
     address TEXT,
     opening_balance DECIMAL(15,2) DEFAULT 0,
+    opening_balance_type TEXT DEFAULT 'Payable', -- Fixed: Added type persistence
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );

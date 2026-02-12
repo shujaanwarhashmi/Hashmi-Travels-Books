@@ -70,9 +70,13 @@ const CustomerList: React.FC = () => {
   const handleSave = async () => {
     if (!formData.name) return alert("Customer name is required.");
 
+    // Preserve existing code if editing, otherwise generate new
+    const existingCust = editingId ? state.customers.find(c => c.id === editingId) : null;
+    const customerCode = existingCust ? existingCust.code : `C-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
+
     const customerData: Partial<Customer> = {
       id: editingId || undefined,
-      code: `C-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
+      code: customerCode,
       name: formData.name,
       phone: formData.phone,
       email: formData.email,

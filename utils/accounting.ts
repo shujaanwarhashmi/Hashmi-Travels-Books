@@ -120,17 +120,27 @@ export const getLedger = (partyId: string, partyType: 'Customer' | 'Vendor', sta
 
   if (!party) return [];
 
-  let runningBalance = Number(party.openingBalance || 0);
-  const isReceivable = partyType === 'Customer' && party.openingBalanceType === 'Receivable';
-  const isPayable = partyType === 'Vendor' && party.openingBalanceType === 'Payable';
+  // Determine if the opening balance is Debit (Receivable/Advance) or Credit (Payable)
+  // Customers: 'Receivable' is Debit, 'Payable' is Credit
+  // Vendors: 'Advance' is Debit, 'Payable' is Credit
+  const isDebitOpening = party.openingBalanceType === 'Receivable' || party.openingBalanceType === 'Advance';
+  const isCreditOpening = party.openingBalanceType === 'Payable';
+
+  // For a Customer/Receivable account, Debit increases balance.
+  // For a Vendor/Payable account, Credit increases balance.
+  const isDebitNormal = partyType === 'Customer';
+
+  let runningBalance = isDebitNormal 
+    ? (isDebitOpening ? Number(party.openingBalance) : -Number(party.openingBalance))
+    : (isCreditOpening ? Number(party.openingBalance) : -Number(party.openingBalance));
 
   const entries: any[] = [{
     date: 'Opening',
     voucherNo: '-',
     type: 'Opening Balance',
     description: 'Initial balance',
-    debit: isReceivable ? Number(party.openingBalance) : 0,
-    credit: isPayable ? Number(party.openingBalance) : 0,
+    debit: isDebitOpening ? Number(party.openingBalance) : 0,
+    credit: isCreditOpening ? Number(party.openingBalance) : 0,
     balance: runningBalance
   }];
 
@@ -158,7 +168,7 @@ export const getLedger = (partyId: string, partyType: 'Customer' | 'Vendor', sta
   partyEntries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   partyEntries.forEach(ent => {
-    if (partyType === 'Customer') {
+    if (isDebitNormal) {
       runningBalance += ent.debit - ent.credit;
     } else {
       runningBalance += ent.credit - ent.debit;

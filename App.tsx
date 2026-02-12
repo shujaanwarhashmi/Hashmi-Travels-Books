@@ -237,7 +237,6 @@ const App: React.FC = () => {
         ...(rects.data || []).map(v => transform(v, 'Receipt'))
       ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-      // FIX: Added missing email and address properties to Customer and Vendor mappings to resolve TypeScript error on line 240
       setState(prev => ({
         ...prev, accounts: mappedAccounts, vouchers: allVouchers,
         customers: (custs.data || []).map((c: any) => ({ 
@@ -249,7 +248,7 @@ const App: React.FC = () => {
           address: c.address || '', 
           city: c.city, 
           openingBalance: Number(c.opening_balance), 
-          openingBalanceType: 'Receivable', 
+          openingBalanceType: (c.opening_balance_type as any) || 'Receivable', // Fixed: Use DB value
           isActive: c.is_active, 
           status: 'Active & Visible' 
         })),
@@ -262,7 +261,7 @@ const App: React.FC = () => {
           address: v.address || '', 
           city: v.city, 
           openingBalance: Number(v.opening_balance), 
-          openingBalanceType: 'Payable', 
+          openingBalanceType: (v.opening_balance_type as any) || 'Payable', // Fixed: Use DB value
           isActive: v.is_active, 
           status: 'Active & Visible' 
         }))
@@ -314,7 +313,6 @@ const App: React.FC = () => {
 
   const upsertCustomer = async (c: Partial<Customer>) => {
     setLoading(true);
-    // FIX: Added email and address to the payload object to ensure consistency with Customer type
     const p = { 
       customer_code: c.code, 
       name: c.name, 
@@ -323,6 +321,7 @@ const App: React.FC = () => {
       address: c.address || '', 
       city: c.city, 
       opening_balance: c.openingBalance, 
+      opening_balance_type: c.openingBalanceType, // Fixed: Save type
       is_active: c.isActive 
     };
     const { error } = c.id && c.id.length > 20 ? await supabase.from('customers').update(p).eq('id', c.id) : await supabase.from('customers').insert(p);
@@ -332,7 +331,6 @@ const App: React.FC = () => {
 
   const upsertVendor = async (v: Partial<Vendor>) => {
     setLoading(true);
-    // FIX: Added email and address to the payload object to ensure consistency with Vendor type
     const p = { 
       vendor_code: v.code, 
       vendor_name: v.name, 
@@ -341,6 +339,7 @@ const App: React.FC = () => {
       address: v.address || '', 
       city: v.city, 
       opening_balance: v.openingBalance, 
+      opening_balance_type: v.openingBalanceType, // Fixed: Save type
       is_active: v.isActive 
     };
     const { error } = v.id && v.id.length > 20 ? await supabase.from('vendors').update(p).eq('id', v.id) : await supabase.from('vendors').insert(p);
