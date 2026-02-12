@@ -21,7 +21,8 @@ interface AppContextType {
   setState: React.Dispatch<React.SetStateAction<GlobalState>>;
   session: any | null;
   loading: boolean;
-  dbStatus: 'connecting' | 'connected' | 'error' | 'empty';
+  dbStatus: 'connecting' | 'connected' | 'error' | 'empty' | 'missing_tables';
+  missingTables: string[];
   logout: () => void;
   refreshData: () => Promise<void>;
   addVoucher: (v: Voucher) => Promise<void>;
@@ -91,7 +92,7 @@ const Sidebar = () => {
 };
 
 const Topbar = () => {
-  const { state, toggleTheme, toggleCompact, logout, refreshData, loading } = useApp();
+  const { state, toggleTheme, toggleCompact, logout, refreshData, loading, dbStatus } = useApp();
   const navigate = useNavigate();
 
   return (
@@ -100,6 +101,9 @@ const Topbar = () => {
         <h2 className="text-sm font-black text-slate-800 dark:text-slate-200 uppercase tracking-tighter">
           {state.settings.legalTitle}
         </h2>
+        {dbStatus === 'missing_tables' && (
+          <span className="bg-rose-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full animate-pulse">SCHEMA MISMATCH</span>
+        )}
       </div>
 
       <div className="flex items-center gap-4">
@@ -134,25 +138,44 @@ const App: React.FC = () => {
   const [session, setSession] = useState<any | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [dbStatus, setDbStatus] = useState<'connecting' | 'connected' | 'error' | 'empty'>('connecting');
+  const [dbStatus, setDbStatus] = useState<'connecting' | 'connected' | 'error' | 'empty' | 'missing_tables'>('connecting');
+  const [missingTables, setMissingTables] = useState<string[]>([]);
   const [state, setState] = useState<GlobalState>(DEFAULT_STATE);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    const tablesToFetch = [
+      { name: 'customers', table: 'customers' },
+      { name: 'vendors', table: 'vendors' },
+      { name: 'chart_of_accounts', table: 'chart_of_accounts' },
+      { name: 'hotel_vouchers', table: 'hotel_vouchers' },
+      { name: 'transport_vouchers', table: 'transport_vouchers' },
+      { name: 'ticket_vouchers', table: 'ticket_vouchers' },
+      { name: 'visa_vouchers', table: 'visa_vouchers' },
+      { name: 'receipts', table: 'receipts' },
+      { name: 'journal_vouchers', table: 'journal_vouchers' },
+      { name: 'journal_voucher_entries', table: 'journal_voucher_entries' },
+      { name: 'ledger_entries', table: 'ledger_entries' }
+    ];
+
     try {
-      const [custs, vends, accounts, hotels, trans, tickets, visas, rects, jvs, jvEntries, ledger] = await Promise.all([
-        supabase.from('customers').select('*'),
-        supabase.from('vendors').select('*'),
-        supabase.from('chart_of_accounts').select('*'),
-        supabase.from('hotel_vouchers').select('*'),
-        supabase.from('transport_vouchers').select('*'),
-        supabase.from('ticket_vouchers').select('*'),
-        supabase.from('visa_vouchers').select('*'),
-        supabase.from('receipts').select('*'),
-        supabase.from('journal_vouchers').select('*'),
-        supabase.from('journal_voucher_entries').select('*'),
-        supabase.from('ledger_entries').select('*')
-      ]);
+      const results = await Promise.all(tablesToFetch.map(t => supabase.from(t.table).select('*')));
+      
+      const foundMissing: string[] = [];
+      results.forEach((res, idx) => {
+        if (res.error && res.error.code === 'PGRST204') {
+          foundMissing.push(tablesToFetch[idx].table);
+        }
+      });
+
+      if (foundMissing.length > 0) {
+        setMissingTables(foundMissing);
+        setDbStatus('missing_tables');
+        setLoading(false);
+        return;
+      }
+
+      const [custs, vends, accounts, hotels, trans, tickets, visas, rects, jvs, jvEntries, ledger] = results;
 
       const mappedAccounts: Account[] = (accounts.data || []).map((a: any) => ({
         id: a.id,
@@ -232,7 +255,11 @@ const App: React.FC = () => {
         }))
       }));
       setDbStatus('connected');
-    } catch (e) { setDbStatus('error'); } finally { setLoading(false); }
+    } catch (e) { 
+      setDbStatus('error'); 
+    } finally { 
+      setLoading(false); 
+    }
   }, []);
 
   useEffect(() => {
@@ -303,9 +330,16 @@ const App: React.FC = () => {
     try {
       const v = state.vouchers.find(x => x.id === id);
       const tableMap: any = { Hotel: 'hotel_vouchers', Transport: 'transport_vouchers', Ticket: 'ticket_vouchers', Visa: 'visa_vouchers', Receipt: 'receipts', Journal: 'journal_vouchers' };
-      if (v) await supabase.from(tableMap[v.type]).delete().eq('id', id);
+      if (v) {
+        const { error } = await supabase.from(tableMap[v.type]).delete().eq('id', id);
+        if (error) throw error;
+      }
       await fetchData();
-    } catch (e) { alert("Delete failed"); } finally { setLoading(false); }
+    } catch (e: any) { 
+      alert("Delete failed: " + (e.message || "Unknown database error")); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const upsertCustomer = async (c: Partial<Customer>) => {
@@ -336,7 +370,7 @@ const App: React.FC = () => {
   };
 
   const value = useMemo(() => ({ 
-    state, setState, session, loading, dbStatus, logout: () => supabase.auth.signOut(), refreshData: fetchData, addVoucher, deleteVoucher, 
+    state, setState, session, loading, dbStatus, missingTables, logout: () => supabase.auth.signOut(), refreshData: fetchData, addVoucher, deleteVoucher, 
     upsertCustomer, upsertVendor, upsertAccount,
     deleteCustomer: async (id: string) => { await supabase.from('customers').delete().eq('id', id); fetchData(); },
     deleteVendor: async (id: string) => { await supabase.from('vendors').delete().eq('id', id); fetchData(); },
@@ -344,7 +378,7 @@ const App: React.FC = () => {
     toggleTheme: () => setState(p => ({ ...p, settings: { ...p.settings, theme: p.settings.theme === 'light' ? 'dark' : 'light' } })),
     toggleCompact: () => setState(p => ({ ...p, settings: { ...p.settings, compactView: !p.settings.compactView } })),
     enterGuestMode: () => setSession({ user: { email: 'demo@hashmi.core' } } as any)
-  }), [state, session, loading, dbStatus, fetchData]);
+  }), [state, session, loading, dbStatus, missingTables, fetchData]);
 
   if (initializing) return <div className="min-h-screen flex items-center justify-center bg-[#0B1120] text-sky-500 font-black uppercase tracking-[0.2em]">Hashmi Core Initializing...</div>;
 

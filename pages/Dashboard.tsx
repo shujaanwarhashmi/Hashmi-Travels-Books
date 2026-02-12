@@ -26,7 +26,7 @@ const StatCard = ({ title, value, subValue, icon, color, trend, compact }: { tit
 );
 
 const Dashboard: React.FC = () => {
-  const { state, refreshData } = useApp();
+  const { state, dbStatus, missingTables } = useApp();
   const { compactView } = state.settings;
 
   const metrics = useMemo(() => {
@@ -70,7 +70,37 @@ const Dashboard: React.FC = () => {
     };
   }, [state]);
 
-  const isEmpty = state.vouchers.length === 0 && state.customers.length === 0 && state.vendors.length === 0;
+  if (dbStatus === 'missing_tables') {
+    return (
+      <div className="min-h-[80vh] flex items-center justify-center p-8 animate-in fade-in zoom-in duration-500">
+        <div className="max-w-2xl bg-white dark:bg-slate-900 rounded-[3rem] p-12 shadow-2xl border border-rose-100 dark:border-rose-900/20 text-center space-y-8">
+          <div className="w-24 h-24 bg-rose-500 rounded-3xl flex items-center justify-center text-white text-4xl mx-auto shadow-xl shadow-rose-500/20">
+            <i className="fa-solid fa-database"></i>
+          </div>
+          <div>
+            <h1 className="text-3xl font-black text-slate-900 dark:text-slate-100 uppercase tracking-tighter">Database Schema Mismatch</h1>
+            <p className="text-slate-500 mt-4 font-bold leading-relaxed">
+              Your Supabase database is missing critical tables required for the current version of Hashmi Ledger.
+            </p>
+          </div>
+          <div className="bg-slate-50 dark:bg-slate-800/50 p-8 rounded-2xl text-left space-y-4">
+             <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest">Identified Missing Tables:</p>
+             <ul className="grid grid-cols-2 gap-2">
+                {missingTables.map(t => (
+                  <li key={t} className="flex items-center gap-2 text-xs font-black text-slate-700 dark:text-slate-300">
+                    <i className="fa-solid fa-circle-exclamation text-rose-400"></i> {t}
+                  </li>
+                ))}
+             </ul>
+          </div>
+          <div className="pt-4 flex flex-col items-center gap-4">
+            <Link to="/settings" className="bg-[#0B1120] dark:bg-sky-600 text-white px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:scale-105 transition-all">Go to SQL Setup</Link>
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Navigate to Settings > Database Setup to view the SQL script</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`${compactView ? 'space-y-6' : 'space-y-10'} animate-in fade-in duration-700 pb-20`}>
