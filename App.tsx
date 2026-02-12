@@ -298,6 +298,34 @@ const App: React.FC = () => {
     } catch (err: any) { alert(err.message); } finally { setLoading(false); }
   };
 
+  const deleteVoucher = async (id: string) => {
+    setLoading(true);
+    try {
+      const v = state.vouchers.find(x => x.id === id);
+      const tableMap: any = { Hotel: 'hotel_vouchers', Transport: 'transport_vouchers', Ticket: 'ticket_vouchers', Visa: 'visa_vouchers', Receipt: 'receipts', Journal: 'journal_vouchers' };
+      if (v) await supabase.from(tableMap[v.type]).delete().eq('id', id);
+      await fetchData();
+    } catch (e) { alert("Delete failed"); } finally { setLoading(false); }
+  };
+
+  const upsertCustomer = async (c: Partial<Customer>) => {
+    setLoading(true);
+    try {
+      const p = { customer_code: c.code, name: c.name, phone: c.phone, opening_balance: c.openingBalance, opening_balance_type: c.openingBalanceType, is_active: c.isActive };
+      await supabase.from('customers').upsert({ id: c.id, ...p });
+      await fetchData();
+    } catch (e) { alert("Failed to save customer"); } finally { setLoading(false); }
+  };
+
+  const upsertVendor = async (v: Partial<Vendor>) => {
+    setLoading(true);
+    try {
+      const p = { vendor_code: v.code, vendor_name: v.name, phone: v.phone, opening_balance: v.openingBalance, opening_balance_type: v.openingBalanceType, is_active: v.isActive };
+      await supabase.from('vendors').upsert({ id: v.id, ...p });
+      await fetchData();
+    } catch (e) { alert("Failed to save vendor"); } finally { setLoading(false); }
+  };
+
   const upsertAccount = async (a: Partial<Account>) => {
     setLoading(true);
     try {
@@ -308,8 +336,8 @@ const App: React.FC = () => {
   };
 
   const value = useMemo(() => ({ 
-    state, setState, session, loading, dbStatus, logout: () => supabase.auth.signOut(), refreshData: fetchData, addVoucher, deleteVoucher: (id: string) => fetchData(), 
-    upsertCustomer: async (c: any) => fetchData(), upsertVendor: async (v: any) => fetchData(), upsertAccount,
+    state, setState, session, loading, dbStatus, logout: () => supabase.auth.signOut(), refreshData: fetchData, addVoucher, deleteVoucher, 
+    upsertCustomer, upsertVendor, upsertAccount,
     deleteCustomer: async (id: string) => { await supabase.from('customers').delete().eq('id', id); fetchData(); },
     deleteVendor: async (id: string) => { await supabase.from('vendors').delete().eq('id', id); fetchData(); },
     deleteAccount: async (id: string) => { await supabase.from('chart_of_accounts').delete().eq('id', id); fetchData(); },

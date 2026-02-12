@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useApp } from '../App';
@@ -21,6 +22,12 @@ const VoucherList: React.FC = () => {
       return `${v.transportType} • ${v.route}`;
     }
     return v.description;
+  };
+
+  const handleDelete = (id: string) => {
+    if (window.confirm('Are you sure you want to permanently delete this voucher? This will remove all ledger postings.')) {
+      deleteVoucher(id);
+    }
   };
 
   return (
@@ -130,7 +137,7 @@ const VoucherList: React.FC = () => {
                           <i className="fa-solid fa-pen"></i>
                         </button>
                         <button 
-                          onClick={() => deleteVoucher(v.id)}
+                          onClick={() => handleDelete(v.id)}
                           className="p-2 text-slate-400 hover:text-rose-600 transition-colors"
                           title="Delete"
                         >
