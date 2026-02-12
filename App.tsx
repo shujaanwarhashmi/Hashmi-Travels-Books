@@ -163,7 +163,7 @@ const App: React.FC = () => {
       
       const foundMissing: string[] = [];
       results.forEach((res, idx) => {
-        if (res.error && res.error.code === 'PGRST204') {
+        if (res.error && (res.error.code === 'PGRST204' || res.error.message.includes('not found'))) {
           foundMissing.push(tablesToFetch[idx].table);
         }
       });
@@ -363,10 +363,19 @@ const App: React.FC = () => {
   const upsertAccount = async (a: Partial<Account>) => {
     setLoading(true);
     try {
-      const payload = { account_code: a.code, account_name: a.title, account_type: a.type };
-      await supabase.from('chart_of_accounts').upsert({ id: a.id, ...payload });
+      const payload: any = { account_code: a.code, account_name: a.title, account_type: a.type };
+      // Check if ID is a real UUID or a temp frontend ID
+      const isRealId = a.id && a.id.includes('-'); 
+      if (isRealId) payload.id = a.id;
+
+      const { error } = await supabase.from('chart_of_accounts').upsert(payload);
+      if (error) throw error;
       await fetchData();
-    } catch (e) { alert("Failed to save account."); } finally { setLoading(false); }
+    } catch (e: any) { 
+      alert("Failed to save account: " + e.message); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const value = useMemo(() => ({ 

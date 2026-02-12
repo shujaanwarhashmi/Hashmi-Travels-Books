@@ -27,24 +27,6 @@ const Settings: React.FC = () => {
     downloadAnchorNode.remove();
   };
 
-  const handleExportCSV = (table: 'vouchers' | 'customers' | 'vendors') => {
-    const data = state[table];
-    if (!data || data.length === 0) return alert(`The ${table} master is currently empty. Nothing to export.`);
-    const headers = Object.keys(data[0]).filter(k => typeof data[0][k] !== 'object');
-    const csvContent = [
-      headers.join(','),
-      ...data.map(row => headers.map(header => JSON.stringify(row[header] || "")).join(','))
-    ].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `TravelLedger_Export_${table}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -67,8 +49,17 @@ const Settings: React.FC = () => {
   const sqlSchema = `-- ======================================================
 -- HASHMI TRAVEL BOOKS - MASTER DATABASE (v17.2)
 -- ======================================================
--- Run this in your Supabase SQL Editor if you see 
--- "Table not found" or "Schema Cache" errors.
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE IF NOT EXISTS chart_of_accounts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    account_code TEXT UNIQUE NOT NULL,
+    account_name TEXT NOT NULL,
+    account_type TEXT NOT NULL,
+    is_system_generated BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
 CREATE TABLE IF NOT EXISTS journal_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -93,8 +84,36 @@ CREATE TABLE IF NOT EXISTS journal_voucher_entries (
     description TEXT
 );
 
--- Ensure other core tables exist...
--- (Full SQL schema provided in previous implementation turn)`;
+CREATE TABLE IF NOT EXISTS ledger_entries (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    entry_date DATE NOT NULL,
+    account_id UUID REFERENCES chart_of_accounts(id) ON DELETE CASCADE,
+    party_id UUID, 
+    reference_id UUID NOT NULL, 
+    reference_no TEXT,
+    debit DECIMAL(15,2) DEFAULT 0,
+    credit DECIMAL(15,2) DEFAULT 0,
+    narration TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- THE TRIGGER: This ensures JVs impact the ledger table automatically
+CREATE OR REPLACE FUNCTION process_journal_post()
+RETURNS TRIGGER AS $$
+BEGIN
+    DELETE FROM ledger_entries WHERE reference_id = NEW.id;
+    INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, credit, narration)
+    SELECT 
+        NEW.voucher_date, account_id, party_id, NEW.id, NEW.voucher_no, (debit * roe), (credit * roe), COALESCE(description, NEW.narration)
+    FROM journal_voucher_entries 
+    WHERE journal_id = NEW.id;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_jv_post ON journal_vouchers;
+CREATE TRIGGER trg_jv_post AFTER INSERT OR UPDATE ON journal_vouchers FOR EACH ROW EXECUTE FUNCTION process_journal_post();
+`;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -166,7 +185,7 @@ CREATE TABLE IF NOT EXISTS journal_voucher_entries (
                  <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/20 p-6 rounded-2xl flex items-start gap-4">
                     <i className="fa-solid fa-circle-info text-amber-500 text-xl mt-1"></i>
                     <p className="text-xs font-bold text-amber-700 dark:text-amber-400 leading-relaxed">
-                      If you see a "Schema Cache" error, it means you just created a table. You might need to wait 30 seconds or click "Refresh Schema" in Supabase, but typically running the SQL above and refreshing this app solves it.
+                      Copy the code above and run it in your Supabase SQL Editor. This will enable the Journal Voucher impacts in your Account Registry.
                     </p>
                  </div>
               </div>
