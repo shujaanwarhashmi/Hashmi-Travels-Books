@@ -1,3 +1,4 @@
+
 import React, { useMemo } from 'react';
 import { useApp } from '../App';
 import { formatCurrency, calculateAccountBalance } from '../utils/accounting';
@@ -32,29 +33,34 @@ const Dashboard: React.FC = () => {
     const cash = calculateAccountBalance('acc-1', state.vouchers, 0);
     const bank = calculateAccountBalance('acc-2', state.vouchers, 0);
     
-    // Correct logic: Calculate balance per customer and sum them up
-    let totalReceivables = 0;
+    // CUSTOMER BALANCES (DR = Receivable, CR = Advance/Overpaid)
+    let customerDrTotal = 0;
+    let customerCrTotal = 0;
     state.customers.forEach(c => {
       const bal = calculateAccountBalance(
         'acc-3', 
         state.vouchers, 
         c.openingBalanceType === 'Receivable' ? c.openingBalance : -c.openingBalance, 
         'Debit',
-        c.id // Filter by specific party
+        c.id
       );
-      if (bal > 0) totalReceivables += bal;
+      if (bal > 0) customerDrTotal += bal;
+      else if (bal < 0) customerCrTotal += Math.abs(bal);
     });
 
-    let totalPayables = 0;
+    // VENDOR BALANCES (CR = Payable, DR = Advance Paid)
+    let vendorCrTotal = 0;
+    let vendorDrTotal = 0;
     state.vendors.forEach(v => {
       const bal = calculateAccountBalance(
         'acc-5', 
         state.vouchers, 
         v.openingBalanceType === 'Payable' ? v.openingBalance : -v.openingBalance, 
         'Credit',
-        v.id // Filter by specific party
+        v.id
       );
-      if (bal > 0) totalPayables += bal;
+      if (bal > 0) vendorCrTotal += bal;
+      else if (bal < 0) vendorDrTotal += Math.abs(bal);
     });
 
     const income = state.accounts.filter(a => a.type === 'Income').reduce((s, a) => s + calculateAccountBalance(a.id, state.vouchers, 0, 'Credit'), 0);
@@ -62,8 +68,10 @@ const Dashboard: React.FC = () => {
 
     return { 
       cashBank: cash + bank, 
-      receivables: totalReceivables, 
-      payables: totalPayables, 
+      customerDrTotal,
+      customerCrTotal,
+      vendorCrTotal,
+      vendorDrTotal,
       income, 
       expenses,
       netProfit: income - expenses
@@ -101,7 +109,7 @@ const Dashboard: React.FC = () => {
            </div>
            <h2 className="text-xl font-black text-amber-900 dark:text-amber-400 uppercase tracking-tighter mb-2">Database Empty or Disconnected</h2>
            <p className="text-sm font-bold text-amber-800 dark:text-amber-500/80 max-w-lg mx-auto mb-8 uppercase tracking-widest leading-relaxed">
-             No records found in the cloud ledger. Please ensure you have run the <code className="bg-white dark:bg-slate-800 px-2 py-0.5 rounded">schema.sql</code> script in your Supabase SQL Editor.
+             No records found in the cloud ledger. Please ensure you have run the schema script in your Supabase SQL Editor.
            </p>
            <div className="flex flex-wrap justify-center gap-4">
               <button 
@@ -117,17 +125,69 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
+      {/* Main Stats Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-        <StatCard compact={compactView} title="Liquid Assets" value={`Rs. ${metrics.cashBank.toLocaleString()}`} subValue="Cash & Bank Balances" icon="fa-wallet" color="bg-emerald-500" trend="+12%" />
-        <StatCard compact={compactView} title="Total Receivables" value={`Rs. ${metrics.receivables.toLocaleString()}`} subValue="Customer Outstanding" icon="fa-hand-holding-dollar" color="bg-sky-500" />
-        <StatCard compact={compactView} title="Total Payables" value={`Rs. ${metrics.payables.toLocaleString()}`} subValue="Vendor Liabilities" icon="fa-file-invoice" color="bg-rose-500" />
-        <StatCard compact={compactView} title="Total Income" value={`Rs. ${metrics.income.toLocaleString()}`} subValue="Gross Service Revenue" icon="fa-chart-pie" color="bg-indigo-600" trend="+5%" />
+        <StatCard compact={compactView} title="Liquid Assets" value={`Rs. ${metrics.cashBank.toLocaleString()}`} subValue="Cash & Bank Balances" icon="fa-wallet" color="bg-[#0F172A]" trend="+12%" />
+        <StatCard compact={compactView} title="Net Period Income" value={`Rs. ${metrics.income.toLocaleString()}`} subValue="Gross Service Revenue" icon="fa-chart-pie" color="bg-indigo-600" trend="+5%" />
+        <StatCard compact={compactView} title="Total Expenses" value={`Rs. ${metrics.expenses.toLocaleString()}`} subValue="Operational Overhead" icon="fa-arrow-trend-down" color="bg-rose-600" />
+        <StatCard compact={compactView} title="Calculated Profit" value={`Rs. ${metrics.netProfit.toLocaleString()}`} subValue="Income - Expenses" icon="fa-star" color="bg-emerald-600" />
+      </div>
+
+      {/* DETAILED PARTY BALANCES - USER REQUESTED ALL DR/CR */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Customer Balance Matrix */}
+        <div className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm space-y-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest">Customer Ledger Matrix</h3>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Complete Receivable & Advance Summary</p>
+            </div>
+            <div className="w-10 h-10 bg-sky-50 dark:bg-sky-900/20 rounded-xl flex items-center justify-center text-sky-500"><i className="fa-solid fa-users"></i></div>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-6">
+            <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 group hover:border-emerald-500 transition-colors">
+              <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Total Receivables (DR)</p>
+              <h4 className="text-2xl font-black text-slate-900 dark:text-slate-100">Rs. {metrics.customerDrTotal.toLocaleString()}</h4>
+              <p className="text-[9px] font-bold text-emerald-500 mt-1 uppercase tracking-tighter">Amount due from clients</p>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 group hover:border-rose-500 transition-colors">
+              <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Customer Credits (CR)</p>
+              <h4 className="text-2xl font-black text-slate-900 dark:text-slate-100">Rs. {metrics.customerCrTotal.toLocaleString()}</h4>
+              <p className="text-[9px] font-bold text-rose-500 mt-1 uppercase tracking-tighter">Advances / Overpayments</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Vendor Balance Matrix */}
+        <div className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm space-y-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest">Vendor Ledger Matrix</h3>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Complete Payable & Advance Summary</p>
+            </div>
+            <div className="w-10 h-10 bg-rose-50 dark:bg-rose-900/20 rounded-xl flex items-center justify-center text-rose-500"><i className="fa-solid fa-truck"></i></div>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-6">
+            <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 group hover:border-rose-500 transition-colors">
+              <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Total Payables (CR)</p>
+              <h4 className="text-2xl font-black text-slate-900 dark:text-slate-100">Rs. {metrics.vendorCrTotal.toLocaleString()}</h4>
+              <p className="text-[9px] font-bold text-rose-500 mt-1 uppercase tracking-tighter">Amount due to suppliers</p>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 group hover:border-emerald-500 transition-colors">
+              <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Vendor Advances (DR)</p>
+              <h4 className="text-2xl font-black text-slate-900 dark:text-slate-100">Rs. {metrics.vendorDrTotal.toLocaleString()}</h4>
+              <p className="text-[9px] font-bold text-emerald-500 mt-1 uppercase tracking-tighter">Advances paid to vendors</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2">
            <div className={`${compactView ? 'p-6' : 'p-10'} bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col h-full`}>
-             <h3 className="text-sm font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest mb-10">Functional Balance Matrix</h3>
+             <h3 className="text-sm font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest mb-10">Functional Activity Audit</h3>
              <div className="space-y-8 flex-1">
                 <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-6 rounded-2xl border border-slate-100 dark:border-slate-800">
                   <div className="flex items-center gap-4">
@@ -145,7 +205,7 @@ const Dashboard: React.FC = () => {
                 </div>
                 <div className="flex justify-between items-center bg-[#0B1120] p-8 rounded-3xl text-white shadow-2xl relative overflow-hidden">
                    <div className="relative z-10">
-                     <p className="text-[10px] font-black text-sky-400 uppercase tracking-widest">Calculated Net Profit</p>
+                     <p className="text-[10px] font-black text-sky-400 uppercase tracking-widest">Net Operational Margin</p>
                      <h4 className="text-4xl font-black text-emerald-400">Rs. {metrics.netProfit.toLocaleString()}</h4>
                    </div>
                    <i className="fa-solid fa-star absolute right-[-20px] top-[-20px] text-[100px] text-slate-800 opacity-20"></i>

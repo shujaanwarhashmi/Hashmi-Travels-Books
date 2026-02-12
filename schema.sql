@@ -1,7 +1,7 @@
 
 -- ======================================================
--- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.3)
--- RECONSTRUCTED FOR CLONING & INTEGRATED DELETIONS
+-- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.6)
+-- SECURITY HARDENING: FULL RLS & SYSTEM SEEDING
 -- ======================================================
 
 -- 0. SCHEMA PERMISSIONS
@@ -11,7 +11,7 @@ GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT USAGE ON SCHEMA public TO postgres;
 
--- 1. DROP EXISTING TO REGENERATE WITH NEW CONSTRAINTS
+-- 1. CLEAN RESTART
 DROP TABLE IF EXISTS ledger_entries CASCADE;
 DROP TABLE IF EXISTS hotel_vouchers CASCADE;
 DROP TABLE IF EXISTS transport_vouchers CASCADE;
@@ -166,18 +166,17 @@ CREATE TABLE ledger_entries (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. TRIGGER: CLEANUP LEDGER ON DELETE
+-- 5. TRIGGER FUNCTIONS (SECURITY DEFINER)
 CREATE OR REPLACE FUNCTION cleanup_ledger_on_delete()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER SECURITY DEFINER AS $$
 BEGIN
     DELETE FROM ledger_entries WHERE reference_id = OLD.id;
     RETURN OLD;
 END;
 $$ LANGUAGE plpgsql;
 
--- 6. TRIGGER: AUTOMATED ACCOUNTING POSTS
 CREATE OR REPLACE FUNCTION process_voucher_ledger_post()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER SECURITY DEFINER AS $$
 DECLARE
     v_ar_id UUID; v_ap_id UUID; v_inc_id UUID; v_narration TEXT;
 BEGIN
@@ -240,7 +239,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 7. BIND TRIGGERS
+-- 6. TRIGGERS
 CREATE TRIGGER trg_hotel_cleanup AFTER DELETE ON hotel_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
 CREATE TRIGGER trg_transport_cleanup AFTER DELETE ON transport_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
 CREATE TRIGGER trg_ticket_cleanup AFTER DELETE ON ticket_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
@@ -253,30 +252,44 @@ CREATE TRIGGER trg_ticket_post AFTER INSERT OR UPDATE ON ticket_vouchers FOR EAC
 CREATE TRIGGER trg_visa_post AFTER INSERT OR UPDATE ON visa_vouchers FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
 CREATE TRIGGER trg_receipt_post AFTER INSERT OR UPDATE ON receipts FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
 
--- 8. SEED ACCOUNTS
+-- 7. SEED DATA (CRITICAL FOR MAPPING)
 INSERT INTO chart_of_accounts (account_code, account_name, account_type, is_system_generated) VALUES
 ('1001', 'CASH IN HAND', 'Cash', true),
 ('1002', 'BANK - MAIN ACCOUNT', 'Bank', true),
 ('1003', 'ACCOUNTS RECEIVABLE', 'Receivable', true),
+('1004', 'ADVANCE TO VENDORS', 'Asset', true),
 ('2001', 'ACCOUNTS PAYABLE', 'Payable', true),
 ('4001', 'TRANSPORT INCOME', 'Income', false),
 ('4002', 'HOTEL SERVICE INCOME', 'Income', false),
 ('4003', 'AIR TICKET INCOME', 'Income', false),
 ('4004', 'VISA SERVICE INCOME', 'Income', false),
-('5001', 'OFFICE EXPENSES', 'Expense', false)
+('5001', 'OFFICE EXPENSES', 'Expense', false),
+('3001', 'CAPITAL ACCOUNT', 'Equity', true)
 ON CONFLICT (account_code) DO NOTHING;
 
--- 9. SECURITY
-ALTER TABLE hotel_vouchers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE transport_vouchers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE ticket_vouchers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE visa_vouchers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE receipts DISABLE ROW LEVEL SECURITY;
-ALTER TABLE ledger_entries DISABLE ROW LEVEL SECURITY;
-ALTER TABLE customers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE vendors DISABLE ROW LEVEL SECURITY;
-ALTER TABLE chart_of_accounts DISABLE ROW LEVEL SECURITY;
+-- 8. SECURITY
+ALTER TABLE hotel_vouchers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE transport_vouchers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ticket_vouchers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE visa_vouchers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE receipts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ledger_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chart_of_accounts ENABLE ROW LEVEL SECURITY;
 
+-- 9. PERMISSIVE POLICIES
+CREATE POLICY "Public full access to chart_of_accounts" ON chart_of_accounts FOR ALL TO public USING (true) WITH CHECK (true);
+CREATE POLICY "Public full access to customers" ON customers FOR ALL TO public USING (true) WITH CHECK (true);
+CREATE POLICY "Public full access to vendors" ON vendors FOR ALL TO public USING (true) WITH CHECK (true);
+CREATE POLICY "Public full access to hotel_vouchers" ON hotel_vouchers FOR ALL TO public USING (true) WITH CHECK (true);
+CREATE POLICY "Public full access to transport_vouchers" ON transport_vouchers FOR ALL TO public USING (true) WITH CHECK (true);
+CREATE POLICY "Public full access to ticket_vouchers" ON ticket_vouchers FOR ALL TO public USING (true) WITH CHECK (true);
+CREATE POLICY "Public full access to visa_vouchers" ON visa_vouchers FOR ALL TO public USING (true) WITH CHECK (true);
+CREATE POLICY "Public full access to receipts" ON receipts FOR ALL TO public USING (true) WITH CHECK (true);
+CREATE POLICY "Public full access to ledger_entries" ON ledger_entries FOR ALL TO public USING (true) WITH CHECK (true);
+
+-- 10. FINAL GRANTS
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role, public;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role, public;
 GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role, public;

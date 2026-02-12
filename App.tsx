@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, createContext, useContext, useCallback } from 'react';
 import { HashRouter, Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { GlobalState, Voucher, Customer, Vendor, Account } from './types';
@@ -198,8 +199,9 @@ const App: React.FC = () => {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setDbStatus('connecting');
     try {
-      const [custs, vends, accounts, hotels, trans, tickets, visas, rects, ledger] = await Promise.all([
+      const results = await Promise.all([
         supabase.from('customers').select('*'),
         supabase.from('vendors').select('*'),
         supabase.from('chart_of_accounts').select('*'),
@@ -211,18 +213,60 @@ const App: React.FC = () => {
         supabase.from('ledger_entries').select('*')
       ]);
 
+      // Check for errors in any response
+      const errorResult = results.find(r => r.error);
+      if (errorResult) {
+        console.error('Supabase Fetch Error:', errorResult.error);
+        setDbStatus('error');
+        setLoading(false);
+        return;
+      }
+
+      const [custs, vends, accounts, hotels, trans, tickets, visas, rects, ledger] = results;
+
+      // Robust Account Mapping for System IDs
+      const systemAccountCodeMap: Record<string, string> = {
+        '1001': 'acc-1',
+        '1002': 'acc-2',
+        '1003': 'acc-3',
+        '1004': 'acc-4',
+        '2001': 'acc-5',
+        '4001': 'acc-6',
+        '4002': 'acc-7',
+        '5001': 'acc-8',
+        '5002': 'acc-9',
+        '3001': 'acc-10',
+        '4003': 'acc-11',
+        '4004': 'acc-12',
+      };
+
       const mappedAccounts: Account[] = (accounts.data || []).map((a: any) => ({
-        id: a.account_code.startsWith('100') ? `acc-${a.account_code.slice(-1)}` : a.id,
-        code: a.account_code, title: a.account_name, type: a.account_type as any, isSystem: a.is_system_generated, dbId: a.id
+        id: systemAccountCodeMap[a.account_code] || a.id,
+        code: a.account_code, 
+        title: a.account_name, 
+        type: a.account_type as any, 
+        isSystem: a.is_system_generated, 
+        dbId: a.id
       }));
 
-      const transform = (v: any, type: any): Voucher => ({
-        ...v, id: v.id, voucherNo: v.voucher_no || v.receipt_no, date: v.voucher_date || v.receipt_date, type, status: v.status || 'Posted',
-        totalAmount: Number(v.total_sale_pkr || v.amount_pkr || 0), roe: Number(v.roe || 1), buyPrice: Number(v.buy_rate_sar || v.net_buy_pkr || 0), salePrice: Number(v.sale_rate_sar || 0),
-        passengerName: v.passenger_name, hotelProperty: v.hotel_name,
+      const transformVoucher = (v: any, type: any): Voucher => ({
+        ...v, 
+        id: v.id, 
+        voucherNo: v.voucher_no || v.receipt_no, 
+        date: v.voucher_date || v.receipt_date, 
+        type, 
+        status: v.status || 'Posted',
+        totalAmount: Number(v.total_sale_pkr || v.amount_pkr || 0), 
+        roe: Number(v.roe || 1), 
+        buyPrice: Number(v.buy_rate_sar || v.net_buy_pkr || 0), 
+        salePrice: Number(v.sale_rate_sar || 0),
+        passengerName: v.passenger_name, 
+        hotelProperty: v.hotel_name,
         entries: (ledger.data || []).filter((le: any) => le.reference_id === v.id).map((le: any) => ({
-          id: le.id, accountId: mappedAccounts.find(ma => ma.dbId === le.account_id)?.id || le.account_id,
-          debit: Number(le.debit || 0), credit: Number(le.credit || 0),
+          id: le.id, 
+          accountId: mappedAccounts.find(ma => ma.dbId === le.account_id)?.id || le.account_id,
+          debit: Number(le.debit || 0), 
+          credit: Number(le.credit || 0),
           customerId: le.account_id === mappedAccounts.find(m => m.code === '1003')?.dbId ? le.party_id : undefined,
           vendorId: le.account_id === mappedAccounts.find(m => m.code === '2001')?.dbId ? le.party_id : undefined,
           description: le.narration
@@ -230,15 +274,17 @@ const App: React.FC = () => {
       });
 
       const allVouchers: Voucher[] = [
-        ...(hotels.data || []).map(v => transform(v, 'Hotel')),
-        ...(trans.data || []).map(v => transform(v, 'Transport')),
-        ...(tickets.data || []).map(v => transform(v, 'Ticket')),
-        ...(visas.data || []).map(v => transform(v, 'Visa')),
-        ...(rects.data || []).map(v => transform(v, 'Receipt'))
+        ...(hotels.data || []).map(v => transformVoucher(v, 'Hotel')),
+        ...(trans.data || []).map(v => transformVoucher(v, 'Transport')),
+        ...(tickets.data || []).map(v => transformVoucher(v, 'Ticket')),
+        ...(visas.data || []).map(v => transformVoucher(v, 'Visa')),
+        ...(rects.data || []).map(v => transformVoucher(v, 'Receipt'))
       ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
       setState(prev => ({
-        ...prev, accounts: mappedAccounts, vouchers: allVouchers,
+        ...prev, 
+        accounts: mappedAccounts, 
+        vouchers: allVouchers,
         customers: (custs.data || []).map((c: any) => ({ 
           id: c.id, 
           code: c.customer_code, 
@@ -248,7 +294,7 @@ const App: React.FC = () => {
           address: c.address || '', 
           city: c.city, 
           openingBalance: Number(c.opening_balance), 
-          openingBalanceType: (c.opening_balance_type as any) || 'Receivable', // Fixed: Use DB value
+          openingBalanceType: (c.opening_balance_type as any) || 'Receivable',
           isActive: c.is_active, 
           status: 'Active & Visible' 
         })),
@@ -261,13 +307,18 @@ const App: React.FC = () => {
           address: v.address || '', 
           city: v.city, 
           openingBalance: Number(v.opening_balance), 
-          openingBalanceType: (v.opening_balance_type as any) || 'Payable', // Fixed: Use DB value
+          openingBalanceType: (v.opening_balance_type as any) || 'Payable',
           isActive: v.is_active, 
           status: 'Active & Visible' 
         }))
       }));
-      setDbStatus('connected');
-    } catch (e) { setDbStatus('error'); } finally { setLoading(false); }
+      setDbStatus(allVouchers.length === 0 && custs.data?.length === 0 ? 'empty' : 'connected');
+    } catch (e) { 
+      console.error('Fetch Fatal Error:', e);
+      setDbStatus('error'); 
+    } finally { 
+      setLoading(false); 
+    }
   }, []);
 
   useEffect(() => {
@@ -321,7 +372,7 @@ const App: React.FC = () => {
       address: c.address || '', 
       city: c.city, 
       opening_balance: c.openingBalance, 
-      opening_balance_type: c.openingBalanceType, // Fixed: Save type
+      opening_balance_type: c.openingBalanceType,
       is_active: c.isActive 
     };
     const { error } = c.id && c.id.length > 20 ? await supabase.from('customers').update(p).eq('id', c.id) : await supabase.from('customers').insert(p);
@@ -339,7 +390,7 @@ const App: React.FC = () => {
       address: v.address || '', 
       city: v.city, 
       opening_balance: v.openingBalance, 
-      opening_balance_type: v.openingBalanceType, // Fixed: Save type
+      opening_balance_type: v.openingBalanceType,
       is_active: v.isActive 
     };
     const { error } = v.id && v.id.length > 20 ? await supabase.from('vendors').update(p).eq('id', v.id) : await supabase.from('vendors').insert(p);
