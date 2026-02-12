@@ -152,8 +152,7 @@ const Topbar = () => {
              className={`w-8 h-8 rounded flex items-center justify-center transition-all ${state.settings.theme === 'dark' ? 'bg-white dark:bg-slate-700 text-sky-500 shadow-sm' : 'text-slate-400'}`}
              title="Toggle Dark Mode"
            >
-             <i className={`fa-solid ${state.settings.theme === 'dark' ? 'fa-moon' : 'fa-sun'} text-xs`}></i>
-           </button>
+             <i className={`fa-solid ${state.settings.theme === 'dark' ? 'fa-moon' : 'fa-sun'} text-xs`}`}></button>
            <button 
              onClick={logout}
              className="w-8 h-8 rounded flex items-center justify-center transition-all text-slate-400 hover:text-rose-500"
@@ -213,7 +212,6 @@ const App: React.FC = () => {
         supabase.from('ledger_entries').select('*')
       ]);
 
-      // Check for errors in any response
       const errorResult = results.find(r => r.error);
       if (errorResult) {
         console.error('Supabase Fetch Error:', errorResult.error);
@@ -224,20 +222,10 @@ const App: React.FC = () => {
 
       const [custs, vends, accounts, hotels, trans, tickets, visas, rects, ledger] = results;
 
-      // Robust Account Mapping for System IDs
       const systemAccountCodeMap: Record<string, string> = {
-        '1001': 'acc-1',
-        '1002': 'acc-2',
-        '1003': 'acc-3',
-        '1004': 'acc-4',
-        '2001': 'acc-5',
-        '4001': 'acc-6',
-        '4002': 'acc-7',
-        '5001': 'acc-8',
-        '5002': 'acc-9',
-        '3001': 'acc-10',
-        '4003': 'acc-11',
-        '4004': 'acc-12',
+        '1001': 'acc-1', '1002': 'acc-2', '1003': 'acc-3', '1004': 'acc-4',
+        '2001': 'acc-5', '4001': 'acc-6', '4002': 'acc-7', '5001': 'acc-8',
+        '5002': 'acc-9', '3001': 'acc-10', '4003': 'acc-11', '4004': 'acc-12',
       };
 
       const mappedAccounts: Account[] = (accounts.data || []).map((a: any) => ({
@@ -258,17 +246,29 @@ const App: React.FC = () => {
         status: v.status || 'Posted',
         totalAmount: Number(v.total_sale_pkr || v.amount_pkr || 0), 
         roe: Number(v.roe || 1), 
-        buyPrice: Number(v.buy_rate_sar || v.net_buy_pkr || 0), 
-        salePrice: Number(v.sale_rate_sar || 0),
+        buyPrice: Number(v.buy_rate_sar || v.buy_rate_pkr || v.net_buy_pkr || 0), 
+        salePrice: Number(v.sale_rate_sar || v.sale_rate_pkr || (v.total_sale_pkr && type !== 'Ticket' ? v.total_sale_pkr : 0)),
         passengerName: v.passenger_name, 
         hotelProperty: v.hotel_name,
+        route: v.route,
+        transportType: v.vehicle_type,
+        quantity: v.quantity,
+        airlineName: v.airline_name,
+        ticketNumber: v.ticket_no,
+        gdsPnr: v.gds_pnr,
+        baseFare: Number(v.base_fare_pkr || 0),
+        taxes: Number(v.tax_pkr || 0),
+        serviceFee: Number(v.service_fee_pkr || 0),
+        country: v.country,
+        visaType: v.visa_type,
+        description: v.remarks || v.narration || v.description || '',
         entries: (ledger.data || []).filter((le: any) => le.reference_id === v.id).map((le: any) => ({
           id: le.id, 
           accountId: mappedAccounts.find(ma => ma.dbId === le.account_id)?.id || le.account_id,
           debit: Number(le.debit || 0), 
           credit: Number(le.credit || 0),
-          customerId: le.account_id === mappedAccounts.find(m => m.code === '1003')?.dbId ? le.party_id : undefined,
-          vendorId: le.account_id === mappedAccounts.find(m => m.code === '2001')?.dbId ? le.party_id : undefined,
+          customerId: le.party_id && le.account_id === mappedAccounts.find(m => m.code === '1003')?.dbId ? le.party_id : undefined,
+          vendorId: le.party_id && le.account_id === mappedAccounts.find(m => m.code === '2001')?.dbId ? le.party_id : undefined,
           description: le.narration
         }))
       });
@@ -286,33 +286,19 @@ const App: React.FC = () => {
         accounts: mappedAccounts, 
         vouchers: allVouchers,
         customers: (custs.data || []).map((c: any) => ({ 
-          id: c.id, 
-          code: c.customer_code, 
-          name: c.name, 
-          phone: c.phone, 
-          email: c.email || '', 
-          address: c.address || '', 
-          city: c.city, 
-          openingBalance: Number(c.opening_balance), 
+          id: c.id, code: c.customer_code, name: c.name, phone: c.phone, email: c.email || '', 
+          address: c.address || '', city: c.city, openingBalance: Number(c.opening_balance), 
           openingBalanceType: (c.opening_balance_type as any) || 'Receivable',
-          isActive: c.is_active, 
-          status: 'Active & Visible' 
+          isActive: c.is_active, status: 'Active & Visible' 
         })),
         vendors: (vends.data || []).map((v: any) => ({ 
-          id: v.id, 
-          code: v.vendor_code, 
-          name: v.vendor_name, 
-          phone: v.phone, 
-          email: v.email || '', 
-          address: v.address || '', 
-          city: v.city, 
-          openingBalance: Number(v.opening_balance), 
+          id: v.id, code: v.vendor_code, name: v.vendor_name, phone: v.phone, email: v.email || '', 
+          address: v.address || '', city: v.city, openingBalance: Number(v.opening_balance), 
           openingBalanceType: (v.opening_balance_type as any) || 'Payable',
-          isActive: v.is_active, 
-          status: 'Active & Visible' 
+          isActive: v.is_active, status: 'Active & Visible' 
         }))
       }));
-      setDbStatus(allVouchers.length === 0 && custs.data?.length === 0 ? 'empty' : 'connected');
+      setDbStatus(allVouchers.length === 0 && (custs.data?.length === 0 || !custs.data) ? 'empty' : 'connected');
     } catch (e) { 
       console.error('Fetch Fatal Error:', e);
       setDbStatus('error'); 
@@ -332,23 +318,62 @@ const App: React.FC = () => {
   const addVoucher = async (v: Voucher) => {
     setLoading(true);
     try {
-      const getP = (pId: string | undefined, list: any[]) => pId?.length && pId.length > 20 ? pId : list.find(x => x.id === pId)?.id || null;
+      const getP = (pId: string | undefined, list: any[]) => pId && pId.length > 20 ? pId : (list.find(x => x.id === pId)?.id || null);
       const cId = getP(v.entries.find(e => e.customerId)?.customerId, state.customers);
       const vId = getP(v.entries.find(e => e.vendorId)?.vendorId, state.vendors);
 
-      let payload: any = { voucher_no: v.voucherNo, voucher_date: v.date, customer_id: cId, vendor_id: vId, roe: v.roe };
+      let payload: any = { 
+        voucher_no: v.voucherNo, 
+        voucher_date: v.date, 
+        customer_id: cId, 
+        vendor_id: vId, 
+        roe: Number(v.roe || 1) 
+      };
       let table = '';
 
-      if (v.type === 'Hotel') { table = 'hotel_vouchers'; payload = { ...payload, hotel_name: v.hotelProperty, passenger_name: v.passengerName, check_in: v.checkIn, check_out: v.checkOut, rooms: v.rooms, buy_rate_sar: v.buyPrice, sale_rate_sar: v.salePrice }; }
-      else if (v.type === 'Transport') { table = 'transport_vouchers'; payload = { ...payload, route: v.route, vehicle_type: v.transportType, amount_sar: v.salePrice }; }
-      else if (v.type === 'Ticket') { table = 'ticket_vouchers'; payload = { ...payload, passenger_name: v.passengerName, airline_name: v.airlineName, ticket_no: v.ticketNumber, gds_pnr: v.gdsPnr, base_fare_pkr: v.baseFare, tax_pkr: v.taxes, service_fee_pkr: v.serviceFee, net_buy_pkr: v.buyPrice }; }
-      else if (v.type === 'Visa') { table = 'visa_vouchers'; payload = { ...payload, passenger_name: v.passengerName, country: v.country, visa_type: v.visaType, buy_rate_pkr: v.buyPrice, sale_rate_pkr: v.salePrice }; }
-      else if (v.type === 'Receipt') { table = 'receipts'; payload = { receipt_no: v.voucherNo, receipt_date: v.date, customer_id: cId, vendor_id: vId, deposit_account_id: state.accounts.find(a => a.id === v.entries[0].accountId)?.dbId || v.entries[0].accountId, amount_pkr: v.totalAmount, narration: v.description }; }
+      if (v.type === 'Hotel') { 
+        table = 'hotel_vouchers'; 
+        payload = { ...payload, hotel_name: v.hotelProperty, passenger_name: v.passengerName, check_in: v.checkIn, check_out: v.checkOut, rooms: v.rooms, buy_rate_sar: v.buyPrice, sale_rate_sar: v.salePrice, remarks: v.description }; 
+      }
+      else if (v.type === 'Transport') { 
+        table = 'transport_vouchers'; 
+        payload = { 
+          ...payload, 
+          route: v.route, 
+          vehicle_type: v.transportType, 
+          quantity: Number(v.quantity || 1), 
+          buy_rate_sar: Number(v.buyPrice || 0), 
+          sale_rate_sar: Number(v.salePrice || 0),
+          remarks: v.description 
+        }; 
+      }
+      else if (v.type === 'Ticket') { 
+        table = 'ticket_vouchers'; 
+        payload = { ...payload, passenger_name: v.passengerName, airline_name: v.airlineName, ticket_no: v.ticketNumber, gds_pnr: v.gdsPnr, base_fare_pkr: v.baseFare, tax_pkr: v.taxes, service_fee_pkr: v.serviceFee, net_buy_pkr: v.buyPrice, remarks: v.description }; 
+      }
+      else if (v.type === 'Visa') { 
+        table = 'visa_vouchers'; 
+        payload = { ...payload, passenger_name: v.passengerName, country: v.country, visa_type: v.visaType, buy_rate_pkr: v.buyPrice, sale_rate_pkr: v.salePrice, remarks: v.description }; 
+      }
+      else if (v.type === 'Receipt') { 
+        table = 'receipts'; 
+        payload = { receipt_no: v.voucherNo, receipt_date: v.date, customer_id: cId, vendor_id: vId, deposit_account_id: state.accounts.find(a => a.id === v.entries[0].accountId)?.dbId || v.entries[0].accountId, amount_pkr: v.totalAmount, narration: v.description, roe: Number(v.roe || 1) }; 
+      }
 
-      const { error } = v.id.length > 20 ? await supabase.from(table).update(payload).eq('id', v.id) : await supabase.from(table).insert(payload);
+      if (!table) throw new Error("Invalid voucher type mapping");
+
+      const { error } = (v.id && v.id.length > 20) 
+        ? await supabase.from(table).update(payload).eq('id', v.id) 
+        : await supabase.from(table).insert(payload);
+        
       if (error) throw error;
       await fetchData();
-    } catch (err: any) { alert(err.message); } finally { setLoading(false); }
+    } catch (err: any) { 
+      console.error('Save Error:', err);
+      alert(err.message || "Failed to save record to cloud."); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const deleteVoucher = async (id: string) => {
@@ -357,45 +382,64 @@ const App: React.FC = () => {
     try {
       const v = state.vouchers.find(x => x.id === id);
       const tableMap: any = { Hotel: 'hotel_vouchers', Transport: 'transport_vouchers', Ticket: 'ticket_vouchers', Visa: 'visa_vouchers', Receipt: 'receipts' };
-      if (v) await supabase.from(tableMap[v.type]).delete().eq('id', id);
+      if (v) {
+        const { error } = await supabase.from(tableMap[v.type]).delete().eq('id', id);
+        if (error) throw error;
+      }
       await fetchData();
-    } catch (e) { alert("Delete failed"); } finally { setLoading(false); }
+    } catch (e: any) { 
+      alert(e.message || "Delete failed"); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const upsertCustomer = async (c: Partial<Customer>) => {
     setLoading(true);
-    const p = { 
-      customer_code: c.code, 
-      name: c.name, 
-      phone: c.phone, 
-      email: c.email || '', 
-      address: c.address || '', 
-      city: c.city, 
-      opening_balance: c.openingBalance, 
-      opening_balance_type: c.openingBalanceType,
-      is_active: c.isActive 
-    };
-    const { error } = c.id && c.id.length > 20 ? await supabase.from('customers').update(p).eq('id', c.id) : await supabase.from('customers').insert(p);
-    if (error) alert(error.message);
-    await fetchData();
+    try {
+      const p = { 
+        customer_code: c.code, 
+        name: c.name, 
+        phone: c.phone, 
+        email: c.email || '', 
+        address: c.address || '', 
+        city: c.city, 
+        opening_balance: c.openingBalance, 
+        opening_balance_type: c.openingBalanceType,
+        is_active: c.isActive 
+      };
+      const { error } = c.id && c.id.length > 20 ? await supabase.from('customers').update(p).eq('id', c.id) : await supabase.from('customers').insert(p);
+      if (error) throw error;
+      await fetchData();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const upsertVendor = async (v: Partial<Vendor>) => {
     setLoading(true);
-    const p = { 
-      vendor_code: v.code, 
-      vendor_name: v.name, 
-      phone: v.phone, 
-      email: v.email || '', 
-      address: v.address || '', 
-      city: v.city, 
-      opening_balance: v.openingBalance, 
-      opening_balance_type: v.openingBalanceType,
-      is_active: v.isActive 
-    };
-    const { error } = v.id && v.id.length > 20 ? await supabase.from('vendors').update(p).eq('id', v.id) : await supabase.from('vendors').insert(p);
-    if (error) alert(error.message);
-    await fetchData();
+    try {
+      const p = { 
+        vendor_code: v.code, 
+        vendor_name: v.name, 
+        phone: v.phone, 
+        email: v.email || '', 
+        address: v.address || '', 
+        city: v.city, 
+        opening_balance: v.openingBalance, 
+        opening_balance_type: v.openingBalanceType,
+        is_active: v.isActive 
+      };
+      const { error } = v.id && v.id.length > 20 ? await supabase.from('vendors').update(p).eq('id', v.id) : await supabase.from('vendors').insert(p);
+      if (error) throw error;
+      await fetchData();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const value = useMemo(() => ({ 

@@ -1,10 +1,9 @@
 
 -- ======================================================
--- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.6)
--- SECURITY HARDENING: FULL RLS & SYSTEM SEEDING
+-- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.7)
+-- ALIGNED FOR PERSISTENCE & TRANSPORT CORE REPAIR
 -- ======================================================
 
--- 0. SCHEMA PERMISSIONS
 GRANT USAGE ON SCHEMA public TO public;
 GRANT USAGE ON SCHEMA public TO anon;
 GRANT USAGE ON SCHEMA public TO authenticated;
@@ -99,9 +98,12 @@ CREATE TABLE transport_vouchers (
     vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
     route TEXT,
     vehicle_type TEXT,
-    amount_sar DECIMAL(15,2),
+    quantity INT DEFAULT 1,
+    buy_rate_sar DECIMAL(15,2),
+    sale_rate_sar DECIMAL(15,2),
     roe DECIMAL(10,4),
-    amount_pkr DECIMAL(15,2) GENERATED ALWAYS AS (amount_sar * roe) STORED,
+    total_sale_pkr DECIMAL(15,2) GENERATED ALWAYS AS (sale_rate_sar * roe * quantity) STORED,
+    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (buy_rate_sar * roe * quantity) STORED,
     remarks TEXT,
     status voucher_status DEFAULT 'Posted'
 );
@@ -137,6 +139,8 @@ CREATE TABLE visa_vouchers (
     roe DECIMAL(10,4) DEFAULT 1.0,
     buy_rate_pkr DECIMAL(15,2),
     sale_rate_pkr DECIMAL(15,2),
+    total_sale_pkr DECIMAL(15,2) GENERATED ALWAYS AS (sale_rate_pkr * roe) STORED,
+    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (buy_rate_pkr * roe) STORED,
     expiry_date DATE,
     status voucher_status DEFAULT 'Posted'
 );
@@ -166,7 +170,7 @@ CREATE TABLE ledger_entries (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. TRIGGER FUNCTIONS (SECURITY DEFINER)
+-- 5. TRIGGER FUNCTIONS
 CREATE OR REPLACE FUNCTION cleanup_ledger_on_delete()
 RETURNS TRIGGER SECURITY DEFINER AS $$
 BEGIN
@@ -197,11 +201,13 @@ BEGIN
     
     ELSIF TG_TABLE_NAME = 'transport_vouchers' THEN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4001' LIMIT 1;
-        v_narration := 'Transport: ' || COALESCE(NEW.route, 'Trip');
+        v_narration := 'Transport: ' || COALESCE(NEW.route, 'Trip') || ' (' || NEW.vehicle_type || ')';
         INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
-        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.amount_pkr, v_narration);
+        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.total_sale_pkr, v_narration);
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.total_buy_pkr, 'Cost: ' || v_narration);
         INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, NEW.amount_pkr, 'Income: ' || v_narration);
+        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.total_sale_pkr - NEW.total_buy_pkr), 'Margin: ' || v_narration);
 
     ELSIF TG_TABLE_NAME = 'ticket_vouchers' THEN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4003' LIMIT 1;
@@ -217,11 +223,11 @@ BEGIN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4004' LIMIT 1;
         v_narration := 'Visa: ' || COALESCE(NEW.visa_type, 'Case') || ' - ' || COALESCE(NEW.passenger_name, 'Pax');
         INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
-        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.sale_rate_pkr, v_narration);
+        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.total_sale_pkr, v_narration);
         INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.buy_rate_pkr, 'Cost: ' || v_narration);
+        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.total_buy_pkr, 'Cost: ' || v_narration);
         INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.sale_rate_pkr - NEW.buy_rate_pkr), 'Margin: ' || v_narration);
+        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.total_sale_pkr - NEW.total_buy_pkr), 'Margin: ' || v_narration);
 
     ELSIF TG_TABLE_NAME = 'receipts' THEN
         v_narration := 'Receipt: ' || COALESCE(NEW.narration, 'Pymt');
@@ -252,7 +258,7 @@ CREATE TRIGGER trg_ticket_post AFTER INSERT OR UPDATE ON ticket_vouchers FOR EAC
 CREATE TRIGGER trg_visa_post AFTER INSERT OR UPDATE ON visa_vouchers FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
 CREATE TRIGGER trg_receipt_post AFTER INSERT OR UPDATE ON receipts FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
 
--- 7. SEED DATA (CRITICAL FOR MAPPING)
+-- 7. SEED DATA
 INSERT INTO chart_of_accounts (account_code, account_name, account_type, is_system_generated) VALUES
 ('1001', 'CASH IN HAND', 'Cash', true),
 ('1002', 'BANK - MAIN ACCOUNT', 'Bank', true),
