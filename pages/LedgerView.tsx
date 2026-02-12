@@ -28,12 +28,22 @@ const LedgerView: React.FC = () => {
     const lastEntry = ledgerEntries[ledgerEntries.length - 1];
     const netBalance = lastEntry ? lastEntry.balance : 0;
     
+    // Logic: 
+    // For Customer (Receivable): Positive balance means we are owed money (Receivable/Dr).
+    // For Vendor (Payable): Positive balance means we owe money (Payable/Cr).
+    let status = '---';
+    if (type === 'Customer') {
+      status = netBalance >= 0 ? 'RECEIVABLE' : 'OVERPAID';
+    } else {
+      status = netBalance >= 0 ? 'PAYABLE' : 'ADVANCE';
+    }
+
     return { 
       debits, 
       credits, 
       netBalance,
       transactionCount,
-      status: netBalance >= 0 ? (type === 'Customer' ? 'RECEIVABLE' : 'OVERPAID') : (type === 'Customer' ? 'PAYABLE' : 'PAYABLE')
+      status
     };
   }, [ledgerEntries, type]);
 
@@ -41,7 +51,6 @@ const LedgerView: React.FC = () => {
     const doc = new jsPDF('p', 'pt', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     
-    // Header
     doc.setFontSize(22);
     doc.setTextColor(11, 17, 32);
     doc.text(state.settings.companyName.toUpperCase(), 40, 50);
@@ -54,7 +63,6 @@ const LedgerView: React.FC = () => {
     doc.setDrawColor(226, 232, 240);
     doc.line(40, 95, pageWidth - 40, 95);
 
-    // Document Title
     doc.setFontSize(16);
     doc.setTextColor(11, 17, 32);
     doc.text(`${type.toUpperCase()} LEDGER STATEMENT`, 40, 125);
@@ -73,7 +81,7 @@ const LedgerView: React.FC = () => {
       e.roe ? e.roe.toString() : '-',
       e.debit ? e.debit.toLocaleString() : '-',
       e.credit ? e.credit.toLocaleString() : '-',
-      `${Math.abs(e.balance).toLocaleString()} ${e.balance >= 0 ? 'Dr' : 'Cr'}`
+      `${Math.abs(e.balance).toLocaleString()} ${e.balance >= 0 ? (type === 'Customer' ? 'Dr' : 'Cr') : (type === 'Customer' ? 'Cr' : 'Dr')}`
     ]);
 
     autoTable(doc, {
@@ -87,8 +95,6 @@ const LedgerView: React.FC = () => {
     });
 
     const finalY = (doc as any).lastAutoTable.finalY + 30;
-    
-    // Summary Section
     doc.setFontSize(12);
     doc.setTextColor(11, 17, 32);
     doc.text('FINANCIAL SUMMARY', 40, finalY);
@@ -105,7 +111,8 @@ const LedgerView: React.FC = () => {
     
     doc.setFontSize(14);
     doc.setTextColor(11, 17, 32);
-    const balText = `Net Balance: Rs. ${Math.abs(totals.netBalance).toLocaleString()} ${totals.netBalance >= 0 ? 'Dr' : 'Cr'}`;
+    const balSuffix = totals.netBalance >= 0 ? (type === 'Customer' ? 'Dr' : 'Cr') : (type === 'Customer' ? 'Cr' : 'Dr');
+    const balText = `Net Balance: Rs. ${Math.abs(totals.netBalance).toLocaleString()} ${balSuffix}`;
     const textWidth = doc.getTextWidth(balText);
     doc.text(balText, pageWidth - 60 - textWidth, finalY + 55);
 
@@ -199,7 +206,7 @@ const LedgerView: React.FC = () => {
               {ledgerEntries.map((ent, i) => (
                 <tr key={i} className={`hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-all duration-200 ${ent.date === 'Opening' ? 'bg-sky-50/30 dark:bg-sky-900/10' : ''}`}>
                   <td className="px-8 py-5 text-xs font-bold text-slate-500 dark:text-slate-400">
-                    {ent.date === 'Opening' ? '2026-01-01' : ent.date}
+                    {ent.date === 'Opening' ? '-' : ent.date}
                   </td>
                   <td className="px-8 py-5">
                     <div className="flex items-center gap-2">
@@ -230,13 +237,13 @@ const LedgerView: React.FC = () => {
                     )}
                   </td>
                   <td className="px-8 py-5 text-right text-xs font-black text-slate-700 dark:text-slate-300">
-                    {ent.debit > 0 ? `Rs. ${ent.debit.toLocaleString()}` : <span className="text-emerald-400">-</span>}
+                    {ent.debit > 0 ? `Rs. ${ent.debit.toLocaleString()}` : <span className="text-slate-200 opacity-20">-</span>}
                   </td>
                   <td className="px-8 py-5 text-right text-xs font-black text-slate-700 dark:text-slate-300">
-                    {ent.credit > 0 ? `Rs. ${ent.credit.toLocaleString()}` : <span className="text-emerald-400">-</span>}
+                    {ent.credit > 0 ? `Rs. ${ent.credit.toLocaleString()}` : <span className="text-slate-200 opacity-20">-</span>}
                   </td>
-                  <td className="px-8 py-5 text-right text-xs font-black text-slate-900 dark:text-slate-100">
-                    {Math.abs(ent.balance).toLocaleString()} {ent.balance >= 0 ? 'Dr' : 'Cr'}
+                  <td className={`px-8 py-5 text-right text-xs font-black ${ent.balance >= 0 ? 'text-slate-900 dark:text-white' : 'text-rose-500'}`}>
+                    {Math.abs(ent.balance).toLocaleString()} {ent.balance >= 0 ? (type === 'Customer' ? 'Dr' : 'Cr') : (type === 'Customer' ? 'Cr' : 'Dr')}
                   </td>
                 </tr>
               ))}
@@ -253,7 +260,7 @@ const LedgerView: React.FC = () => {
                    Rs. {totals.credits.toLocaleString()}
                 </td>
                 <td className="px-8 py-6 text-right bg-[#0B1120] dark:bg-sky-700 text-white">
-                   <span className="text-xs font-black uppercase">Rs. {Math.abs(totals.netBalance).toLocaleString()} {totals.netBalance >= 0 ? 'Dr' : 'Cr'}</span>
+                   <span className="text-xs font-black uppercase">Rs. {Math.abs(totals.netBalance).toLocaleString()} {totals.netBalance >= 0 ? (type === 'Customer' ? 'Dr' : 'Cr') : (type === 'Customer' ? 'Cr' : 'Dr')}</span>
                 </td>
               </tr>
             </tfoot>
