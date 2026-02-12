@@ -17,7 +17,8 @@ export const calculateAccountBalance = (
   let totalDebit = 0;
   let totalCredit = 0;
 
-  const account = state.accounts.find(a => a.id === accountId || a.dbId === accountId || a.code === accountId);
+  // Find account by ID or Code
+  const account = state.accounts.find(a => a.id === accountId || a.code === accountId || a.dbId === accountId);
   if (!account) return 0;
 
   const isAR = account.code === '1003';
@@ -65,11 +66,15 @@ export const calculateAccountBalance = (
   state.vouchers.forEach(v => {
     if (v.status !== 'Posted') return;
     v.entries.forEach(e => {
-      // Check if entry account matches target account
-      const matchAcc = e.accountId === account.id || e.accountId === account.dbId || e.accountId === account.code;
+      // Find the account for this specific entry to check its code
+      const entryAccount = state.accounts.find(a => a.id === e.accountId || a.dbId === e.accountId || a.code === e.accountId);
+      if (!entryAccount) return;
+
+      // Match by code to catch both system accounts and manual ones correctly
+      const matchAcc = entryAccount.code === account.code;
       
       if (matchAcc) {
-        // If we are filtering by a specific party (e.g. Lead Passenger or Sub-Agent)
+        // If we are filtering by a specific party
         if (partyId) {
           if (e.customerId !== partyId && e.vendorId !== partyId) return;
         }
@@ -93,7 +98,8 @@ export const getAccountLedger = (accountId: string, fromDate: string, toDate: st
   state.vouchers.forEach(v => {
     if (v.status !== 'Posted') return;
     v.entries.forEach(e => {
-      if (e.accountId === account.id || e.accountId === account.dbId || e.accountId === account.code) {
+      const entryAccount = state.accounts.find(a => a.id === e.accountId || a.dbId === e.accountId || a.code === e.accountId);
+      if (entryAccount && entryAccount.code === account.code) {
         const dr = e.pkrDebit || (Number(e.debit || 0) * Number(e.roe || 1));
         const cr = e.pkrCredit || (Number(e.credit || 0) * Number(e.roe || 1));
         

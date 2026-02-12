@@ -336,6 +336,10 @@ const VoucherEntryPage: React.FC = () => {
                             <td className="py-4 pr-4">
                               <select className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-2.5 text-[10px] font-bold outline-none appearance-none" value={row.customerId || row.vendorId || ''} onChange={e => {
                                 const val = e.target.value;
+                                if (!val) {
+                                  setJournalRows(journalRows.map(r => r.id === row.id ? {...r, customerId: undefined, vendorId: undefined} : r));
+                                  return;
+                                }
                                 const isC = state.customers.some(c => c.id === val);
                                 setJournalRows(journalRows.map(r => r.id === row.id ? {...r, customerId: isC ? val : undefined, vendorId: !isC ? val : undefined} : r));
                               }}>
@@ -384,11 +388,10 @@ const VoucherEntryPage: React.FC = () => {
                 </div>
               )}
 
-              {/* TICKET / HOTEL / VISA / TRANSPORT FORMS (RESTORED EXACTLY) */}
+              {/* TICKET / HOTEL / VISA / TRANSPORT FORMS */}
               {(type === 'Ticket' || type === 'Hotel' || type === 'Visa' || type === 'Transport') && (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
                    <div className="lg:col-span-8 space-y-12">
-                      {/* Sub-form logic goes here... keeping existing high-fidelity UI logic */}
                       {type === 'Ticket' && (
                         <div className="space-y-12">
                           <div className="space-y-6">
@@ -413,7 +416,6 @@ const VoucherEntryPage: React.FC = () => {
                           </div>
                         </div>
                       )}
-                      {/* ... other type forms following the same high-fidelity pattern ... */}
                       {type === 'Hotel' && (
                         <div className="space-y-12">
                           <div className="grid grid-cols-2 gap-6">
@@ -423,7 +425,7 @@ const VoucherEntryPage: React.FC = () => {
                           <div className="space-y-2"><label className="text-[9px] font-black text-slate-400 uppercase">Lead Passenger Name</label><input className="w-full bg-slate-50 border border-slate-100 rounded-xl px-6 py-4 text-sm font-bold uppercase" placeholder="FULL NAME AS PER PASSPORT" value={paxName} onChange={e => setPaxName(e.target.value)} /></div>
                           <div className="grid grid-cols-3 gap-6">
                               <div className="space-y-2"><label className="text-[9px] font-black text-slate-400 uppercase">Hotel Property</label><input className="w-full bg-slate-50 border border-slate-100 rounded-xl px-6 py-4 text-sm font-bold uppercase" placeholder="TITLE OF PROPERTY" value={hotelName} onChange={e => setHotelName(e.target.value)} /></div>
-                              <div className="space-y-2"><label className="text-[9px] font-black text-slate-400 uppercase">Country</label><input className="w-full bg-slate-50 border border-slate-100 rounded-xl px-6 py-4 text-sm font-bold uppercase" value="SAUDI ARABIA" /></div>
+                              <div className="space-y-2"><label className="text-[9px] font-black text-slate-400 uppercase">Country</label><input className="w-full bg-slate-50 border border-slate-100 rounded-xl px-6 py-4 text-sm font-bold uppercase" value="SAUDI ARABIA" readOnly /></div>
                               <div className="space-y-2"><label className="text-[9px] font-black text-slate-400 uppercase">City</label><input className="w-full bg-slate-50 border border-slate-100 rounded-xl px-6 py-4 text-sm font-bold uppercase" value={city} onChange={e => setCity(e.target.value)} /></div>
                           </div>
                           <div className="grid grid-cols-2 gap-6 relative">
@@ -483,7 +485,6 @@ const VoucherEntryPage: React.FC = () => {
                              <button type="submit" className="w-full bg-sky-600 hover:bg-sky-500 text-white py-6 rounded-2xl font-black text-xs uppercase tracking-widest transition-all">CONFIRM & POST HOTEL</button>
                           </div>
                         )}
-                        {/* ... other sidebars following the same pattern ... */}
                       </div>
                    </div>
                 </div>

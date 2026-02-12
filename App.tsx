@@ -273,6 +273,7 @@ const App: React.FC = () => {
   const addVoucher = async (v: Voucher) => {
     setLoading(true);
     try {
+      const getAccUuid = (id: string) => state.accounts.find(a => a.id === id || a.dbId === id || a.code === id)?.dbId || id;
       const cId = v.entries.find(e => e.customerId)?.customerId || null;
       const vId = v.entries.find(e => e.vendorId)?.vendorId || null;
 
@@ -283,7 +284,7 @@ const App: React.FC = () => {
         if (jvErr) throw jvErr;
         const entryPayload = v.entries.map(e => ({
            journal_id: jv.id,
-           account_id: e.accountId,
+           account_id: getAccUuid(e.accountId),
            party_id: e.customerId || e.vendorId || null,
            debit: e.debit, credit: e.credit, description: e.description,
            currency: e.currency, roe: e.roe
@@ -312,7 +313,7 @@ const App: React.FC = () => {
         await supabase.from('receipts').insert({
           receipt_no: v.voucherNo, receipt_date: v.date, customer_id: cId, vendor_id: vId,
           amount_pkr: v.totalAmount, narration: v.description, 
-          deposit_account_id: v.entries[0]?.accountId
+          deposit_account_id: getAccUuid(v.entries[0]?.accountId)
         });
       } else if (v.type === 'Transport') {
         await supabase.from('transport_vouchers').insert({
@@ -364,9 +365,12 @@ const App: React.FC = () => {
     setLoading(true);
     try {
       const payload: any = { account_code: a.code, account_name: a.title, account_type: a.type };
-      // Check if ID is a real UUID or a temp frontend ID
-      const isRealId = a.id && a.id.includes('-'); 
-      if (isRealId) payload.id = a.id;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const isValidUuid = a.id && uuidRegex.test(a.id);
+      
+      if (isValidUuid) {
+        payload.id = a.id;
+      }
 
       const { error } = await supabase.from('chart_of_accounts').upsert(payload);
       if (error) throw error;

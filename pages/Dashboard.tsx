@@ -30,8 +30,8 @@ const Dashboard: React.FC = () => {
   const { compactView } = state.settings;
 
   const metrics = useMemo(() => {
-    const cash = calculateAccountBalance('acc-1', state);
-    const bank = calculateAccountBalance('acc-2', state);
+    const cash = calculateAccountBalance('1001', state);
+    const bank = calculateAccountBalance('1002', state);
     
     let totalReceivables = 0;
     let totalPayables = 0;
@@ -39,13 +39,13 @@ const Dashboard: React.FC = () => {
     let customerAdvances = 0;
 
     state.customers.forEach(c => {
-      const net = calculateAccountBalance('acc-3', state, c.id);
+      const net = calculateAccountBalance('1003', state, c.id);
       if (net > 0) totalReceivables += net;
       else customerAdvances += Math.abs(net);
     });
 
     state.vendors.forEach(v => {
-      const net = calculateAccountBalance('acc-5', state, v.id);
+      const net = calculateAccountBalance('2001', state, v.id);
       if (net < 0) totalPayables += Math.abs(net);
       else vendorAdvances += net;
     });
@@ -95,7 +95,7 @@ const Dashboard: React.FC = () => {
           </div>
           <div className="pt-4 flex flex-col items-center gap-4">
             <Link to="/settings" className="bg-[#0B1120] dark:bg-sky-600 text-white px-10 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:scale-105 transition-all">Go to SQL Setup</Link>
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Navigate to Settings > Database Setup to view the SQL script</p>
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Navigate to Settings &gt; Database Setup to view the SQL script</p>
           </div>
         </div>
       </div>
