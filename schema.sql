@@ -1,7 +1,7 @@
 
 -- ======================================================
--- HASHMI TRAVEL BOOKS - MASTER DATABASE (v15.7)
--- ALIGNED FOR PERSISTENCE & TRANSPORT CORE REPAIR
+-- HASHMI TRAVEL BOOKS - MASTER DATABASE (v16.18)
+-- ATOMIC DOUBLE-ENTRY ENGINE & DATA INTEGRITY FIX
 -- ======================================================
 
 GRANT USAGE ON SCHEMA public TO public;
@@ -26,7 +26,7 @@ DROP FUNCTION IF EXISTS cleanup_ledger_on_delete() CASCADE;
 DROP TYPE IF EXISTS voucher_status CASCADE;
 DROP TYPE IF EXISTS account_category CASCADE;
 
--- 2. ENUMS & CORE EXTENSIONS
+-- 2. CORE TYPES
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TYPE voucher_status AS ENUM ('Draft', 'Posted', 'Cancelled');
 CREATE TYPE account_category AS ENUM ('Asset', 'Liability', 'Income', 'Expense', 'Equity', 'Cash', 'Bank', 'Receivable', 'Payable');
@@ -64,28 +64,28 @@ CREATE TABLE vendors (
     city TEXT,
     address TEXT,
     opening_balance DECIMAL(15,2) DEFAULT 0,
-    opening_balance_type TEXT DEFAULT 'Payable',
+    opening_balance_type TEXT DEFAULT 'Payable' CHECK (opening_balance_type IN ('Payable', 'Advance')),
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. FINANCIAL VOUCHERS
+-- 4. FINANCIAL VOUCHERS (Enforced Mandatory Party Linkage)
 CREATE TABLE hotel_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     voucher_no TEXT UNIQUE NOT NULL,
     voucher_date DATE DEFAULT CURRENT_DATE,
-    customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
-    vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+    vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
     hotel_name TEXT,
     passenger_name TEXT,
     check_in DATE,
     check_out DATE,
     rooms INT DEFAULT 1,
-    buy_rate_sar DECIMAL(15,2),
-    sale_rate_sar DECIMAL(15,2),
-    roe DECIMAL(10,4),
-    total_sale_pkr DECIMAL(15,2) GENERATED ALWAYS AS (sale_rate_sar * roe * rooms * COALESCE(NULLIF(GREATEST(1, check_out - check_in), 0), 1)) STORED,
-    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (buy_rate_sar * roe * rooms * COALESCE(NULLIF(GREATEST(1, check_out - check_in), 0), 1)) STORED,
+    buy_rate_sar DECIMAL(15,2) DEFAULT 0,
+    sale_rate_sar DECIMAL(15,2) DEFAULT 0,
+    roe DECIMAL(10,4) DEFAULT 1.0,
+    total_sale_pkr DECIMAL(15,2) GENERATED ALWAYS AS (COALESCE(sale_rate_sar, 0) * COALESCE(roe, 1) * COALESCE(rooms, 1) * COALESCE(NULLIF(GREATEST(1, check_out - check_in), 0), 1)) STORED,
+    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (COALESCE(buy_rate_sar, 0) * COALESCE(roe, 1) * COALESCE(rooms, 1) * COALESCE(NULLIF(GREATEST(1, check_out - check_in), 0), 1)) STORED,
     remarks TEXT,
     status voucher_status DEFAULT 'Posted'
 );
@@ -94,16 +94,16 @@ CREATE TABLE transport_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     voucher_no TEXT UNIQUE NOT NULL,
     voucher_date DATE DEFAULT CURRENT_DATE,
-    customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
-    vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+    vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
     route TEXT,
     vehicle_type TEXT,
     quantity INT DEFAULT 1,
-    buy_rate_sar DECIMAL(15,2),
-    sale_rate_sar DECIMAL(15,2),
-    roe DECIMAL(10,4),
-    total_sale_pkr DECIMAL(15,2) GENERATED ALWAYS AS (sale_rate_sar * roe * quantity) STORED,
-    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (buy_rate_sar * roe * quantity) STORED,
+    buy_rate_sar DECIMAL(15,2) DEFAULT 0,
+    sale_rate_sar DECIMAL(15,2) DEFAULT 0,
+    roe DECIMAL(10,4) DEFAULT 1.0,
+    total_sale_pkr DECIMAL(15,2) GENERATED ALWAYS AS (COALESCE(sale_rate_sar, 0) * COALESCE(roe, 1) * COALESCE(quantity, 1)) STORED,
+    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (COALESCE(buy_rate_sar, 0) * COALESCE(roe, 1) * COALESCE(quantity, 1)) STORED,
     remarks TEXT,
     status voucher_status DEFAULT 'Posted'
 );
@@ -112,18 +112,20 @@ CREATE TABLE ticket_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     voucher_no TEXT UNIQUE NOT NULL,
     voucher_date DATE DEFAULT CURRENT_DATE,
-    customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
-    vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+    vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
     passenger_name TEXT,
     airline_name TEXT,
     ticket_no TEXT,
     gds_pnr TEXT,
     roe DECIMAL(10,4) DEFAULT 1.0,
-    base_fare_pkr DECIMAL(15,2),
-    tax_pkr DECIMAL(15,2),
-    service_fee_pkr DECIMAL(15,2),
-    net_buy_pkr DECIMAL(15,2),
-    total_sale_pkr DECIMAL(15,2) GENERATED ALWAYS AS (base_fare_pkr + tax_pkr + service_fee_pkr) STORED,
+    base_fare_pkr DECIMAL(15,2) DEFAULT 0,
+    tax_pkr DECIMAL(15,2) DEFAULT 0,
+    service_fee_pkr DECIMAL(15,2) DEFAULT 0,
+    net_buy_pkr DECIMAL(15,2) DEFAULT 0,
+    total_sale_pkr DECIMAL(15,2) GENERATED ALWAYS AS (COALESCE(base_fare_pkr, 0) + COALESCE(tax_pkr, 0) + COALESCE(service_fee_pkr, 0)) STORED,
+    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (COALESCE(net_buy_pkr, 0)) STORED,
+    remarks TEXT,
     status voucher_status DEFAULT 'Posted'
 );
 
@@ -131,17 +133,18 @@ CREATE TABLE visa_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     voucher_no TEXT UNIQUE NOT NULL,
     voucher_date DATE DEFAULT CURRENT_DATE,
-    customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
-    vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+    vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
     passenger_name TEXT,
     country TEXT,
     visa_type TEXT,
     roe DECIMAL(10,4) DEFAULT 1.0,
-    buy_rate_pkr DECIMAL(15,2),
-    sale_rate_pkr DECIMAL(15,2),
-    total_sale_pkr DECIMAL(15,2) GENERATED ALWAYS AS (sale_rate_pkr * roe) STORED,
-    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (buy_rate_pkr * roe) STORED,
-    expiry_date DATE,
+    buy_rate_pkr DECIMAL(15,2) DEFAULT 0,
+    sale_rate_pkr DECIMAL(15,2) DEFAULT 0,
+    send_to_embassy TEXT,
+    remarks TEXT,
+    total_sale_pkr DECIMAL(15,2) GENERATED ALWAYS AS (COALESCE(sale_rate_pkr, 0) * COALESCE(roe, 1)) STORED,
+    total_buy_pkr DECIMAL(15,2) GENERATED ALWAYS AS (COALESCE(buy_rate_pkr, 0) * COALESCE(roe, 1)) STORED,
     status voucher_status DEFAULT 'Posted'
 );
 
@@ -170,87 +173,101 @@ CREATE TABLE ledger_entries (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. TRIGGER FUNCTIONS
-CREATE OR REPLACE FUNCTION cleanup_ledger_on_delete()
-RETURNS TRIGGER SECURITY DEFINER AS $$
-BEGIN
-    DELETE FROM ledger_entries WHERE reference_id = OLD.id;
-    RETURN OLD;
-END;
-$$ LANGUAGE plpgsql;
-
+-- 5. MANDATORY DOUBLE-ENTRY POSTING ENGINE
 CREATE OR REPLACE FUNCTION process_voucher_ledger_post()
 RETURNS TRIGGER SECURITY DEFINER AS $$
 DECLARE
-    v_ar_id UUID; v_ap_id UUID; v_inc_id UUID; v_narration TEXT;
+    v_ar_id UUID; 
+    v_ap_id UUID; 
+    v_inc_id UUID; 
+    v_narration TEXT;
+    v_total_sale DECIMAL(15,2) := 0; 
+    v_total_buy DECIMAL(15,2) := 0;
+    v_duration INT;
+    v_roe DECIMAL(10,4);
 BEGIN
+    -- Resolve System Account IDs
     SELECT id INTO v_ar_id FROM chart_of_accounts WHERE account_code = '1003' LIMIT 1;
     SELECT id INTO v_ap_id FROM chart_of_accounts WHERE account_code = '2001' LIMIT 1;
     
+    -- Clear existing entries for this reference to prevent duplication
     DELETE FROM ledger_entries WHERE reference_id = NEW.id;
 
+    v_roe := COALESCE(NEW.roe, 1);
+
+    -- Type-specific calculation logic
     IF TG_TABLE_NAME = 'hotel_vouchers' THEN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4002' LIMIT 1;
-        v_narration := 'Hotel: ' || COALESCE(NEW.hotel_name, 'Stay') || ' - ' || COALESCE(NEW.passenger_name, 'Pax');
-        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
-        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.total_sale_pkr, v_narration);
-        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.total_buy_pkr, 'Cost: ' || v_narration);
-        INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.total_sale_pkr - NEW.total_buy_pkr), 'Margin: ' || v_narration);
+        v_duration := COALESCE(NULLIF(GREATEST(1, NEW.check_out - NEW.check_in), 0), 1);
+        v_total_sale := COALESCE(NEW.sale_rate_sar, 0) * v_roe * COALESCE(NEW.rooms, 1) * v_duration;
+        v_total_buy := COALESCE(NEW.buy_rate_sar, 0) * v_roe * COALESCE(NEW.rooms, 1) * v_duration;
+        v_narration := 'Hotel: ' || COALESCE(NEW.hotel_name, 'Service');
     
     ELSIF TG_TABLE_NAME = 'transport_vouchers' THEN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4001' LIMIT 1;
-        v_narration := 'Transport: ' || COALESCE(NEW.route, 'Trip') || ' (' || NEW.vehicle_type || ')';
-        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
-        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.total_sale_pkr, v_narration);
-        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.total_buy_pkr, 'Cost: ' || v_narration);
-        INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.total_sale_pkr - NEW.total_buy_pkr), 'Margin: ' || v_narration);
+        v_total_sale := COALESCE(NEW.sale_rate_sar, 0) * v_roe * COALESCE(NEW.quantity, 1);
+        v_total_buy := COALESCE(NEW.buy_rate_sar, 0) * v_roe * COALESCE(NEW.quantity, 1);
+        v_narration := 'Transport: ' || COALESCE(NEW.route, 'Service');
 
     ELSIF TG_TABLE_NAME = 'ticket_vouchers' THEN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4003' LIMIT 1;
-        v_narration := 'Ticket: ' || COALESCE(NEW.airline_name, 'Flight') || ' - ' || COALESCE(NEW.passenger_name, 'Pax');
-        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
-        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.total_sale_pkr, v_narration);
-        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.net_buy_pkr, 'Cost: ' || v_narration);
-        INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.total_sale_pkr - NEW.net_buy_pkr), 'Margin: ' || v_narration);
+        v_total_sale := COALESCE(NEW.base_fare_pkr, 0) + COALESCE(NEW.tax_pkr, 0) + COALESCE(NEW.service_fee_pkr, 0);
+        v_total_buy := COALESCE(NEW.net_buy_pkr, 0);
+        v_narration := 'Ticket: ' || COALESCE(NEW.airline_name, 'Service');
 
     ELSIF TG_TABLE_NAME = 'visa_vouchers' THEN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4004' LIMIT 1;
-        v_narration := 'Visa: ' || COALESCE(NEW.visa_type, 'Case') || ' - ' || COALESCE(NEW.passenger_name, 'Pax');
-        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
-        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, NEW.total_sale_pkr, v_narration);
-        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, NEW.total_buy_pkr, 'Cost: ' || v_narration);
-        INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (NEW.total_sale_pkr - NEW.total_buy_pkr), 'Margin: ' || v_narration);
+        v_total_sale := COALESCE(NEW.sale_rate_pkr, 0) * v_roe;
+        v_total_buy := COALESCE(NEW.buy_rate_pkr, 0) * v_roe;
+        v_narration := 'Visa: ' || COALESCE(NEW.visa_type, 'Service');
 
     ELSIF TG_TABLE_NAME = 'receipts' THEN
-        v_narration := 'Receipt: ' || COALESCE(NEW.narration, 'Pymt');
+        v_total_sale := COALESCE(NEW.amount_pkr, 0);
+        v_narration := COALESCE(NEW.narration, 'Receipt Payment');
+        
+        -- Receipt Debit: Cash/Bank
         INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, debit, narration)
-        VALUES (NEW.receipt_date, NEW.deposit_account_id, NEW.id, NEW.receipt_no, NEW.amount_pkr, v_narration);
+        VALUES (NEW.receipt_date, NEW.deposit_account_id, NEW.id, NEW.receipt_no, v_total_sale, v_narration);
+        
+        -- Receipt Credit: Customer or Vendor
         IF NEW.customer_id IS NOT NULL THEN
             INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
-            VALUES (NEW.receipt_date, v_ar_id, NEW.customer_id, NEW.id, NEW.receipt_no, NEW.amount_pkr, v_narration);
+            VALUES (NEW.receipt_date, v_ar_id, NEW.customer_id, NEW.id, NEW.receipt_no, v_total_sale, v_narration);
         ELSIF NEW.vendor_id IS NOT NULL THEN
             INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
-            VALUES (NEW.receipt_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.receipt_no, NEW.amount_pkr, v_narration);
+            VALUES (NEW.receipt_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.receipt_no, v_total_sale, v_narration);
         END IF;
+        RETURN NEW;
     END IF;
+
+    -- Standard Service Double-Entry (Debit Customer / Credit Vendor)
+    
+    -- Side 1: Debit Party (Receivable)
+    IF NEW.customer_id IS NOT NULL AND v_total_sale > 0 THEN
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
+        VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, v_total_sale, v_narration);
+    END IF;
+    
+    -- Side 2: Credit Party (Payable / Cost)
+    IF NEW.vendor_id IS NOT NULL AND v_total_buy > 0 THEN
+        INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, v_total_buy, 'Cost: ' || v_narration);
+    END IF;
+
+    -- Side 3: Income (Markup / Margin)
+    IF v_inc_id IS NOT NULL AND (v_total_sale - v_total_buy) <> 0 THEN
+        INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
+        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (v_total_sale - v_total_buy), 'Markup: ' || v_narration);
+    END IF;
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
 -- 6. TRIGGERS
-CREATE TRIGGER trg_hotel_cleanup AFTER DELETE ON hotel_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
-CREATE TRIGGER trg_transport_cleanup AFTER DELETE ON transport_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
-CREATE TRIGGER trg_ticket_cleanup AFTER DELETE ON ticket_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
-CREATE TRIGGER trg_visa_cleanup AFTER DELETE ON visa_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
-CREATE TRIGGER trg_receipt_cleanup AFTER DELETE ON receipts FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
+CREATE OR REPLACE FUNCTION cleanup_ledger_on_delete() RETURNS TRIGGER AS $$
+BEGIN DELETE FROM ledger_entries WHERE reference_id = OLD.id; RETURN OLD; END;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_hotel_post AFTER INSERT OR UPDATE ON hotel_vouchers FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
 CREATE TRIGGER trg_transport_post AFTER INSERT OR UPDATE ON transport_vouchers FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
@@ -258,10 +275,16 @@ CREATE TRIGGER trg_ticket_post AFTER INSERT OR UPDATE ON ticket_vouchers FOR EAC
 CREATE TRIGGER trg_visa_post AFTER INSERT OR UPDATE ON visa_vouchers FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
 CREATE TRIGGER trg_receipt_post AFTER INSERT OR UPDATE ON receipts FOR EACH ROW EXECUTE FUNCTION process_voucher_ledger_post();
 
--- 7. SEED DATA
+CREATE TRIGGER trg_hotel_del AFTER DELETE ON hotel_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
+CREATE TRIGGER trg_transport_del AFTER DELETE ON transport_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
+CREATE TRIGGER trg_ticket_del AFTER DELETE ON ticket_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
+CREATE TRIGGER trg_visa_del AFTER DELETE ON visa_vouchers FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
+CREATE TRIGGER trg_receipt_del AFTER DELETE ON receipts FOR EACH ROW EXECUTE FUNCTION cleanup_ledger_on_delete();
+
+-- 7. INITIALIZE LEDGERS
 INSERT INTO chart_of_accounts (account_code, account_name, account_type, is_system_generated) VALUES
 ('1001', 'CASH IN HAND', 'Cash', true),
-('1002', 'BANK - MAIN ACCOUNT', 'Bank', true),
+('1002', 'BANK ACCOUNT', 'Bank', true),
 ('1003', 'ACCOUNTS RECEIVABLE', 'Receivable', true),
 ('1004', 'ADVANCE TO VENDORS', 'Asset', true),
 ('2001', 'ACCOUNTS PAYABLE', 'Payable', true),
@@ -272,32 +295,3 @@ INSERT INTO chart_of_accounts (account_code, account_name, account_type, is_syst
 ('5001', 'OFFICE EXPENSES', 'Expense', false),
 ('3001', 'CAPITAL ACCOUNT', 'Equity', true)
 ON CONFLICT (account_code) DO NOTHING;
-
--- 8. SECURITY
-ALTER TABLE hotel_vouchers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE transport_vouchers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE ticket_vouchers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE visa_vouchers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE receipts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE ledger_entries ENABLE ROW LEVEL SECURITY;
-ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;
-ALTER TABLE chart_of_accounts ENABLE ROW LEVEL SECURITY;
-
--- 9. PERMISSIVE POLICIES
-CREATE POLICY "Public full access to chart_of_accounts" ON chart_of_accounts FOR ALL TO public USING (true) WITH CHECK (true);
-CREATE POLICY "Public full access to customers" ON customers FOR ALL TO public USING (true) WITH CHECK (true);
-CREATE POLICY "Public full access to vendors" ON vendors FOR ALL TO public USING (true) WITH CHECK (true);
-CREATE POLICY "Public full access to hotel_vouchers" ON hotel_vouchers FOR ALL TO public USING (true) WITH CHECK (true);
-CREATE POLICY "Public full access to transport_vouchers" ON transport_vouchers FOR ALL TO public USING (true) WITH CHECK (true);
-CREATE POLICY "Public full access to ticket_vouchers" ON ticket_vouchers FOR ALL TO public USING (true) WITH CHECK (true);
-CREATE POLICY "Public full access to visa_vouchers" ON visa_vouchers FOR ALL TO public USING (true) WITH CHECK (true);
-CREATE POLICY "Public full access to receipts" ON receipts FOR ALL TO public USING (true) WITH CHECK (true);
-CREATE POLICY "Public full access to ledger_entries" ON ledger_entries FOR ALL TO public USING (true) WITH CHECK (true);
-
--- 10. FINAL GRANTS
-GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role, public;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role, public;
-GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role, public;
-
-NOTIFY pgrst, 'reload schema';

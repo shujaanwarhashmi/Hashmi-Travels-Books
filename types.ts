@@ -8,7 +8,6 @@ export interface Account {
   type: AccountType;
   code: string;
   isSystem?: boolean;
-  // dbId is used to store the Supabase UUID for database operations and mapping
   dbId?: string;
 }
 
@@ -50,6 +49,7 @@ export interface VoucherEntry {
   description?: string;
 }
 
+// Added customerId and vendorId to fix property missing errors in App.tsx and VoucherEntry.tsx
 export interface Voucher {
   id: string;
   voucherNo: string;
@@ -62,6 +62,9 @@ export interface Voucher {
   entries: VoucherEntry[];
   status: 'Draft' | 'Posted';
   createdAt: string;
+  // Shared properties for linking parties
+  customerId?: string;
+  vendorId?: string;
   // Transport specific
   transportType?: string;
   route?: string;
@@ -96,6 +99,7 @@ export interface Voucher {
   processingStatus?: string;
   visaType?: string;
   expiryDate?: string;
+  sendToEmbassy?: string;
 }
 
 export interface GlobalState {

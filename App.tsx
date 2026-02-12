@@ -89,7 +89,7 @@ const Sidebar = () => {
 };
 
 const Topbar = () => {
-  const { state, toggleTheme, toggleCompact, logout, session, refreshData, loading, dbStatus } = useApp();
+  const { state, toggleTheme, toggleCompact, logout, loading, dbStatus } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -115,7 +115,7 @@ const Topbar = () => {
 
   return (
     <header className="no-print sticky top-0 z-40 h-16 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 flex items-center justify-between px-8">
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 text-left">
         <h2 className="text-xs font-black text-slate-400 dark:text-slate-500 tracking-[0.2em] mb-0.5 uppercase">{getPageTitle()}</h2>
         <div className="flex items-center gap-2">
            <div className={`w-2 h-2 rounded-full ${getStatusColor()}`}></div>
@@ -132,13 +132,6 @@ const Topbar = () => {
       </div>
 
       <div className="flex-1 flex justify-end items-center gap-4">
-        <button 
-          onClick={() => refreshData()}
-          className="p-2 text-slate-400 hover:text-sky-500 transition-colors"
-          title="Refresh Data"
-        >
-          <i className={`fa-solid fa-arrows-rotate ${loading ? 'animate-spin' : ''}`}></i>
-        </button>
         <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
            <button 
              onClick={toggleCompact}
@@ -152,7 +145,8 @@ const Topbar = () => {
              className={`w-8 h-8 rounded flex items-center justify-center transition-all ${state.settings.theme === 'dark' ? 'bg-white dark:bg-slate-700 text-sky-500 shadow-sm' : 'text-slate-400'}`}
              title="Toggle Dark Mode"
            >
-             <i className={`fa-solid ${state.settings.theme === 'dark' ? 'fa-moon' : 'fa-sun'} text-xs`}`}></button>
+             <i className={`fa-solid ${state.settings.theme === 'dark' ? 'fa-moon' : 'fa-sun'} text-xs`}></i>
+           </button>
            <button 
              onClick={logout}
              className="w-8 h-8 rounded flex items-center justify-center transition-all text-slate-400 hover:text-rose-500"
@@ -201,35 +195,24 @@ const App: React.FC = () => {
     setDbStatus('connecting');
     try {
       const results = await Promise.all([
-        supabase.from('customers').select('*'),
-        supabase.from('vendors').select('*'),
-        supabase.from('chart_of_accounts').select('*'),
-        supabase.from('hotel_vouchers').select('*'),
-        supabase.from('transport_vouchers').select('*'),
-        supabase.from('ticket_vouchers').select('*'),
-        supabase.from('visa_vouchers').select('*'),
-        supabase.from('receipts').select('*'),
-        supabase.from('ledger_entries').select('*')
+        supabase.from('customers').select('*').order('name'),
+        supabase.from('vendors').select('*').order('vendor_name'),
+        supabase.from('chart_of_accounts').select('*').order('account_code'),
+        supabase.from('hotel_vouchers').select('*').order('voucher_date', { ascending: false }),
+        supabase.from('transport_vouchers').select('*').order('voucher_date', { ascending: false }),
+        supabase.from('ticket_vouchers').select('*').order('voucher_date', { ascending: false }),
+        supabase.from('visa_vouchers').select('*').order('voucher_date', { ascending: false }),
+        supabase.from('receipts').select('*').order('receipt_date', { ascending: false }),
+        supabase.from('ledger_entries').select('*').order('entry_date', { ascending: false })
       ]);
 
       const errorResult = results.find(r => r.error);
-      if (errorResult) {
-        console.error('Supabase Fetch Error:', errorResult.error);
-        setDbStatus('error');
-        setLoading(false);
-        return;
-      }
+      if (errorResult) throw errorResult.error;
 
       const [custs, vends, accounts, hotels, trans, tickets, visas, rects, ledger] = results;
 
-      const systemAccountCodeMap: Record<string, string> = {
-        '1001': 'acc-1', '1002': 'acc-2', '1003': 'acc-3', '1004': 'acc-4',
-        '2001': 'acc-5', '4001': 'acc-6', '4002': 'acc-7', '5001': 'acc-8',
-        '5002': 'acc-9', '3001': 'acc-10', '4003': 'acc-11', '4004': 'acc-12',
-      };
-
       const mappedAccounts: Account[] = (accounts.data || []).map((a: any) => ({
-        id: systemAccountCodeMap[a.account_code] || a.id,
+        id: a.id, 
         code: a.account_code, 
         title: a.account_name, 
         type: a.account_type as any, 
@@ -237,41 +220,50 @@ const App: React.FC = () => {
         dbId: a.id
       }));
 
-      const transformVoucher = (v: any, type: any): Voucher => ({
-        ...v, 
-        id: v.id, 
-        voucherNo: v.voucher_no || v.receipt_no, 
-        date: v.voucher_date || v.receipt_date, 
-        type, 
-        status: v.status || 'Posted',
-        totalAmount: Number(v.total_sale_pkr || v.amount_pkr || 0), 
-        roe: Number(v.roe || 1), 
-        buyPrice: Number(v.buy_rate_sar || v.buy_rate_pkr || v.net_buy_pkr || 0), 
-        salePrice: Number(v.sale_rate_sar || v.sale_rate_pkr || (v.total_sale_pkr && type !== 'Ticket' ? v.total_sale_pkr : 0)),
-        passengerName: v.passenger_name, 
-        hotelProperty: v.hotel_name,
-        route: v.route,
-        transportType: v.vehicle_type,
-        quantity: v.quantity,
-        airlineName: v.airline_name,
-        ticketNumber: v.ticket_no,
-        gdsPnr: v.gds_pnr,
-        baseFare: Number(v.base_fare_pkr || 0),
-        taxes: Number(v.tax_pkr || 0),
-        serviceFee: Number(v.service_fee_pkr || 0),
-        country: v.country,
-        visaType: v.visa_type,
-        description: v.remarks || v.narration || v.description || '',
-        entries: (ledger.data || []).filter((le: any) => le.reference_id === v.id).map((le: any) => ({
-          id: le.id, 
-          accountId: mappedAccounts.find(ma => ma.dbId === le.account_id)?.id || le.account_id,
-          debit: Number(le.debit || 0), 
-          credit: Number(le.credit || 0),
-          customerId: le.party_id && le.account_id === mappedAccounts.find(m => m.code === '1003')?.dbId ? le.party_id : undefined,
-          vendorId: le.party_id && le.account_id === mappedAccounts.find(m => m.code === '2001')?.dbId ? le.party_id : undefined,
-          description: le.narration
-        }))
-      });
+      const transformVoucher = (v: any, type: any): Voucher => {
+        const entries = (ledger.data || [])
+          .filter((le: any) => le.reference_id === v.id)
+          .map((le: any) => ({
+            id: le.id,
+            accountId: mappedAccounts.find(ma => ma.dbId === le.account_id)?.id || le.account_id,
+            debit: Number(le.debit || 0),
+            credit: Number(le.credit || 0),
+            customerId: le.party_id && (le.account_id === mappedAccounts.find(m => m.code === '1003')?.dbId) ? le.party_id : undefined,
+            vendorId: le.party_id && (le.account_id === mappedAccounts.find(m => m.code === '2001')?.dbId) ? le.party_id : undefined,
+            description: le.narration
+          }));
+
+        return {
+          ...v, 
+          id: v.id, 
+          voucherNo: v.voucher_no || v.receipt_no, 
+          date: v.voucher_date || v.receipt_date, 
+          type, 
+          status: v.status || 'Posted',
+          totalAmount: Number(v.total_sale_pkr || v.amount_pkr || 0), 
+          roe: Number(v.roe || 1), 
+          buyPrice: Number(v.buy_rate_sar || v.buy_rate_pkr || v.net_buy_pkr || 0), 
+          salePrice: Number(v.sale_rate_sar || v.sale_rate_pkr || (v.total_sale_pkr && type !== 'Ticket' ? v.total_sale_pkr : 0)),
+          passengerName: v.passenger_name, 
+          hotelProperty: v.hotel_name,
+          route: v.route,
+          transportType: v.vehicle_type,
+          quantity: v.quantity,
+          airlineName: v.airline_name,
+          ticketNumber: v.ticket_no,
+          gdsPnr: v.gds_pnr,
+          baseFare: Number(v.base_fare_pkr || 0),
+          taxes: Number(v.tax_pkr || 0),
+          serviceFee: Number(v.service_fee_pkr || 0),
+          country: v.country,
+          visaType: v.visa_type,
+          sendToEmbassy: v.send_to_embassy,
+          description: v.remarks || v.narration || '',
+          entries: entries,
+          customerId: v.customer_id,
+          vendorId: v.vendor_id
+        };
+      };
 
       const allVouchers: Voucher[] = [
         ...(hotels.data || []).map(v => transformVoucher(v, 'Hotel')),
@@ -318,49 +310,54 @@ const App: React.FC = () => {
   const addVoucher = async (v: Voucher) => {
     setLoading(true);
     try {
-      const getP = (pId: string | undefined, list: any[]) => pId && pId.length > 20 ? pId : (list.find(x => x.id === pId)?.id || null);
-      const cId = getP(v.entries.find(e => e.customerId)?.customerId, state.customers);
-      const vId = getP(v.entries.find(e => e.vendorId)?.vendorId, state.vendors);
+      // FIX: Standardize party IDs to NULL if they are empty strings
+      const cId = v.customerId && v.customerId !== '' ? v.customerId : null;
+      const vId = v.vendorId && v.vendorId !== '' ? v.vendorId : null;
 
+      if (v.type !== 'Receipt' && (!cId || !vId)) {
+        throw new Error(`Data Validation Error: Both Customer and Vendor must be selected for ${v.type} entries.`);
+      }
+
+      let table = '';
       let payload: any = { 
         voucher_no: v.voucherNo, 
         voucher_date: v.date, 
         customer_id: cId, 
         vendor_id: vId, 
-        roe: Number(v.roe || 1) 
+        roe: Number(v.roe || 1),
+        remarks: v.description
       };
-      let table = '';
 
       if (v.type === 'Hotel') { 
         table = 'hotel_vouchers'; 
-        payload = { ...payload, hotel_name: v.hotelProperty, passenger_name: v.passengerName, check_in: v.checkIn, check_out: v.checkOut, rooms: v.rooms, buy_rate_sar: v.buyPrice, sale_rate_sar: v.salePrice, remarks: v.description }; 
+        payload = { ...payload, hotel_name: v.hotelProperty, passenger_name: v.passengerName, check_in: v.checkIn, check_out: v.checkOut, rooms: Number(v.rooms || 1), buy_rate_sar: Number(v.buyPrice || 0), sale_rate_sar: Number(v.salePrice || 0) }; 
       }
       else if (v.type === 'Transport') { 
         table = 'transport_vouchers'; 
-        payload = { 
-          ...payload, 
-          route: v.route, 
-          vehicle_type: v.transportType, 
-          quantity: Number(v.quantity || 1), 
-          buy_rate_sar: Number(v.buyPrice || 0), 
-          sale_rate_sar: Number(v.salePrice || 0),
-          remarks: v.description 
-        }; 
+        payload = { ...payload, route: v.route, vehicle_type: v.transportType, quantity: Number(v.quantity || 1), buy_rate_sar: Number(v.buyPrice || 0), sale_rate_sar: Number(v.salePrice || 0) }; 
       }
       else if (v.type === 'Ticket') { 
         table = 'ticket_vouchers'; 
-        payload = { ...payload, passenger_name: v.passengerName, airline_name: v.airlineName, ticket_no: v.ticketNumber, gds_pnr: v.gdsPnr, base_fare_pkr: v.baseFare, tax_pkr: v.taxes, service_fee_pkr: v.serviceFee, net_buy_pkr: v.buyPrice, remarks: v.description }; 
+        payload = { ...payload, passenger_name: v.passengerName, airline_name: v.airlineName, ticket_no: v.ticketNumber, gds_pnr: v.gdsPnr, base_fare_pkr: Number(v.baseFare || 0), tax_pkr: Number(v.taxes || 0), service_fee_pkr: Number(v.serviceFee || 0), net_buy_pkr: Number(v.buyPrice || 0) }; 
       }
       else if (v.type === 'Visa') { 
         table = 'visa_vouchers'; 
-        payload = { ...payload, passenger_name: v.passengerName, country: v.country, visa_type: v.visaType, buy_rate_pkr: v.buyPrice, sale_rate_pkr: v.salePrice, remarks: v.description }; 
+        payload = { ...payload, passenger_name: v.passengerName, country: v.country, visa_type: v.visaType, buy_rate_pkr: Number(v.buyPrice || 0), sale_rate_pkr: Number(v.salePrice || 0), send_to_embassy: v.sendToEmbassy }; 
       }
       else if (v.type === 'Receipt') { 
         table = 'receipts'; 
-        payload = { receipt_no: v.voucherNo, receipt_date: v.date, customer_id: cId, vendor_id: vId, deposit_account_id: state.accounts.find(a => a.id === v.entries[0].accountId)?.dbId || v.entries[0].accountId, amount_pkr: v.totalAmount, narration: v.description, roe: Number(v.roe || 1) }; 
+        const depositAccId = state.accounts.find(a => a.id === v.entries[0]?.accountId)?.dbId || v.entries[0]?.accountId;
+        payload = { 
+          receipt_no: v.voucherNo, 
+          receipt_date: v.date, 
+          customer_id: cId, 
+          vendor_id: vId, 
+          deposit_account_id: depositAccId, 
+          amount_pkr: Number(v.totalAmount || 0), 
+          narration: v.description, 
+          roe: Number(v.roe || 1) 
+        }; 
       }
-
-      if (!table) throw new Error("Invalid voucher type mapping");
 
       const { error } = (v.id && v.id.length > 20) 
         ? await supabase.from(table).update(payload).eq('id', v.id) 
@@ -369,15 +366,15 @@ const App: React.FC = () => {
       if (error) throw error;
       await fetchData();
     } catch (err: any) { 
-      console.error('Save Error:', err);
-      alert(err.message || "Failed to save record to cloud."); 
+      console.error('Core Storage Error:', err);
+      alert(err.message || "Failed to finalize database commit."); 
     } finally { 
       setLoading(false); 
     }
   };
 
   const deleteVoucher = async (id: string) => {
-    if (!window.confirm("Permanent delete? Ledger history will be cleaned.")) return;
+    if (!window.confirm("CRITICAL: Permanent delete? This will wipe ledger history for this record.")) return;
     setLoading(true);
     try {
       const v = state.vouchers.find(x => x.id === id);
@@ -388,7 +385,7 @@ const App: React.FC = () => {
       }
       await fetchData();
     } catch (e: any) { 
-      alert(e.message || "Delete failed"); 
+      alert(e.message || "Operation failed."); 
     } finally { 
       setLoading(false); 
     }
@@ -397,49 +394,21 @@ const App: React.FC = () => {
   const upsertCustomer = async (c: Partial<Customer>) => {
     setLoading(true);
     try {
-      const p = { 
-        customer_code: c.code, 
-        name: c.name, 
-        phone: c.phone, 
-        email: c.email || '', 
-        address: c.address || '', 
-        city: c.city, 
-        opening_balance: c.openingBalance, 
-        opening_balance_type: c.openingBalanceType,
-        is_active: c.isActive 
-      };
+      const p = { customer_code: c.code, name: c.name, phone: c.phone, email: c.email || '', address: c.address || '', city: c.city, opening_balance: Number(c.openingBalance || 0), opening_balance_type: c.openingBalanceType, is_active: c.isActive };
       const { error } = c.id && c.id.length > 20 ? await supabase.from('customers').update(p).eq('id', c.id) : await supabase.from('customers').insert(p);
       if (error) throw error;
       await fetchData();
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e: any) { alert(e.message); } finally { setLoading(false); }
   };
 
   const upsertVendor = async (v: Partial<Vendor>) => {
     setLoading(true);
     try {
-      const p = { 
-        vendor_code: v.code, 
-        vendor_name: v.name, 
-        phone: v.phone, 
-        email: v.email || '', 
-        address: v.address || '', 
-        city: v.city, 
-        opening_balance: v.openingBalance, 
-        opening_balance_type: v.openingBalanceType,
-        is_active: v.isActive 
-      };
+      const p = { vendor_code: v.code, vendor_name: v.name, phone: v.phone, email: v.email || '', address: v.address || '', city: v.city, opening_balance: Number(v.openingBalance || 0), opening_balance_type: v.openingBalanceType, is_active: v.isActive };
       const { error } = v.id && v.id.length > 20 ? await supabase.from('vendors').update(p).eq('id', v.id) : await supabase.from('vendors').insert(p);
       if (error) throw error;
       await fetchData();
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e: any) { alert(e.message); } finally { setLoading(false); }
   };
 
   const value = useMemo(() => ({ 

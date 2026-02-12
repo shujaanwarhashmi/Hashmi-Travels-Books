@@ -38,6 +38,7 @@ const VoucherEntryPage: React.FC = () => {
   const targetId = id || cloneId;
   const sourceVoucher = state.vouchers.find(v => v.id === targetId);
 
+  // --- Core State ---
   const [type, setType] = useState<VoucherType>(sourceVoucher?.type || 'Ticket');
   const [date, setDate] = useState(isEdit ? sourceVoucher?.date || '' : new Date().toISOString().split('T')[0]);
   
@@ -50,9 +51,9 @@ const VoucherEntryPage: React.FC = () => {
   const [currency, setCurrency] = useState<'SAR' | 'PKR'>(sourceVoucher?.currency || 'PKR');
   const [roe, setRoe] = useState(sourceVoucher?.roe || state.settings.defaultRoe);
 
-  const [selectedCustomer, setSelectedCustomer] = useState(sourceVoucher?.entries.find(e => e.customerId)?.customerId || '');
-  const [selectedVendor, setSelectedVendor] = useState(sourceVoucher?.entries.find(e => e.vendorId)?.vendorId || '');
-  const [depositAccount, setDepositAccount] = useState(sourceVoucher?.entries.find(e => !e.customerId && !e.vendorId && e.debit > 0)?.accountId || 'acc-1');
+  const [selectedCustomer, setSelectedCustomer] = useState(sourceVoucher?.customerId || '');
+  const [selectedVendor, setSelectedVendor] = useState(sourceVoucher?.vendorId || '');
+  const [depositAccount, setDepositAccount] = useState(sourceVoucher?.entries?.find(e => !e.customerId && !e.vendorId && e.debit > 0)?.accountId || 'acc-1');
 
   const [passenger, setPassenger] = useState(sourceVoucher?.passengerName || '');
   const [narration, setNarration] = useState(sourceVoucher?.description || '');
@@ -69,10 +70,11 @@ const VoucherEntryPage: React.FC = () => {
 
   // Visa Specific
   const [passportNo, setPassportNo] = useState(sourceVoucher?.passportNumber || '');
-  const [visaType, setVisaType] = useState(sourceVoucher?.visaType || 'Visit');
+  const [visaType, setVisaType] = useState(sourceVoucher?.visaType || 'Visit Visa');
   const [processingStatus, setProcessingStatus] = useState(sourceVoucher?.processingStatus || 'Pending');
   const [expiryDate, setExpiryDate] = useState(sourceVoucher?.expiryDate || '');
   const [country, setCountry] = useState(sourceVoucher?.country || '');
+  const [embassy, setEmbassy] = useState(sourceVoucher?.sendToEmbassy || '');
   
   // Hotel & Transport Details
   const [hotel, setHotel] = useState(sourceVoucher?.hotelProperty || '');
@@ -96,11 +98,14 @@ const VoucherEntryPage: React.FC = () => {
   const [saleRate, setSaleRate] = useState(sourceVoucher?.salePrice || 0);
   const [buyRate, setBuyRate] = useState(sourceVoucher?.buyPrice || 0);
   const [receiptAmount, setReceiptAmount] = useState(sourceVoucher?.totalAmount || 0);
-  const [sourceEntityType, setSourceEntityType] = useState<'Customers' | 'Vendors'>(sourceVoucher?.entries.some(e => e.vendorId) ? 'Vendors' : 'Customers');
+  const [sourceEntityType, setSourceEntityType] = useState<'Customers' | 'Vendors'>(sourceVoucher?.vendorId ? 'Vendors' : 'Customers');
 
   const duration = useMemo(() => {
     if (!checkIn || !checkOut) return 1;
-    const days = Math.ceil((new Date(checkOut).getTime() - new Date(checkIn).getTime()) / (1000 * 3600 * 24));
+    const start = new Date(checkIn);
+    const end = new Date(checkOut);
+    const diff = end.getTime() - start.getTime();
+    const days = Math.ceil(diff / (1000 * 3600 * 24));
     return days > 0 ? days : 1;
   }, [checkIn, checkOut]);
 
@@ -136,14 +141,18 @@ const VoucherEntryPage: React.FC = () => {
 
     if (!voucherNo.trim()) return alert("Voucher Reference is mandatory.");
 
-    let entries: VoucherEntry[] = [];
+    // FIX: Ensure both Customer and Vendor are strictly selected for service vouchers
+    if (type !== 'Receipt') {
+        if (!selectedCustomer || selectedCustomer === '') {
+            return alert("SYSTEM ERROR: A Client (Customer) must be selected to proceed.");
+        }
+        if (!selectedVendor || selectedVendor === '') {
+            return alert("SYSTEM ERROR: A Service Provider (Vendor) must be selected to proceed.");
+        }
+    }
+
     let finalAmount = 0;
     let description = narration;
-
-    if (type !== 'Receipt') {
-        if (!selectedCustomer) return alert("CUSTOMER SELECTION IS REQUIRED.");
-        if (!selectedVendor) return alert("VENDOR / SUPPLIER SELECTION IS REQUIRED.");
-    }
 
     if (type === 'Hotel') {
       finalAmount = hotelTotalSalePKR;
@@ -153,51 +162,53 @@ const VoucherEntryPage: React.FC = () => {
       finalAmount = ticketTotalSalePKR;
     } else if (type === 'Visa') {
       finalAmount = visaTotalSalePKR;
+      description = `Visa: ${visaType} (${embassy})`;
     } else if (type === 'Receipt') {
       finalAmount = receiptTotalPKR;
     }
 
     const voucher: Voucher = {
       id: isEdit ? id! : generateId(),
-      voucherNo, date, type, currency, 
+      voucherNo, 
+      date, 
+      type, 
+      currency, 
       roe: Number(activeRoe || 1), 
-      status: 'Posted', createdAt: new Date().toISOString(),
-      description, totalAmount: finalAmount, entries: [],
-      passengerName: passenger, hotelProperty: hotel, country: type === 'Visa' ? country : hotelCountry, city: hotelCity,
+      status: 'Posted', 
+      createdAt: new Date().toISOString(),
+      description: description || narration, 
+      totalAmount: finalAmount, 
+      entries: [],
+      customerId: selectedCustomer !== '' ? selectedCustomer : undefined,
+      vendorId: selectedVendor !== '' ? selectedVendor : undefined,
+      passengerName: passenger, 
+      hotelProperty: hotel, 
+      country: type === 'Visa' ? country : hotelCountry, 
+      city: hotelCity,
       checkIn, checkOut, rooms, roomBasis,
       mealPlan, adults, children,
       transportType, route: type === 'Ticket' ? sector : route, vehicleNo, driverName, quantity: Number(quantity || 1),
       salePrice: type === 'Receipt' ? receiptAmount : (type === 'Ticket' ? (baseFare + taxes + serviceFee) : saleRate),
       buyPrice: type === 'Transport' ? buyRate : (type === 'Ticket' ? netBuyCost : buyRate),
       airlineName: airline, gdsPnr, ticketNumber: ticketNo, baseFare, taxes, serviceFee,
-      passportNumber: passportNo, visaType, processingStatus, expiryDate
+      passportNumber: passportNo, visaType, processingStatus, expiryDate, sendToEmbassy: embassy
     };
 
-    // Prepare entries to help frontend display and trigger correct accounting
+    // Construct entries for internal context (actual ledger posting happens in Supabase via Triggers)
     if (type === 'Hotel') {
       voucher.entries = [
-        { id: generateId(), accountId: 'acc-3', debit: hotelTotalSalePKR, credit: 0, customerId: selectedCustomer, description },
-        { id: generateId(), accountId: 'acc-5', debit: 0, credit: hotelTotalBuyPKR, vendorId: selectedVendor, description }
+        { id: generateId(), accountId: 'acc-3', debit: hotelTotalSalePKR, credit: 0, customerId: selectedCustomer },
+        { id: generateId(), accountId: 'acc-5', debit: 0, credit: hotelTotalBuyPKR, vendorId: selectedVendor }
       ];
     } else if (type === 'Transport') {
        voucher.entries = [
-        { id: generateId(), accountId: 'acc-3', debit: transportTotalSalePKR, credit: 0, customerId: selectedCustomer, description },
-        { id: generateId(), accountId: 'acc-5', debit: 0, credit: transportTotalBuyPKR, vendorId: selectedVendor, description }
+        { id: generateId(), accountId: 'acc-3', debit: transportTotalSalePKR, credit: 0, customerId: selectedCustomer },
+        { id: generateId(), accountId: 'acc-5', debit: 0, credit: transportTotalBuyPKR, vendorId: selectedVendor }
       ];
-    } else if (type === 'Ticket') {
-        voucher.entries = [
-         { id: generateId(), accountId: 'acc-3', debit: ticketTotalSalePKR, credit: 0, customerId: selectedCustomer, description },
-         { id: generateId(), accountId: 'acc-5', debit: 0, credit: ticketTotalBuyPKR, vendorId: selectedVendor, description }
-       ];
-    } else if (type === 'Visa') {
-        voucher.entries = [
-         { id: generateId(), accountId: 'acc-3', debit: visaTotalSalePKR, credit: 0, customerId: selectedCustomer, description },
-         { id: generateId(), accountId: 'acc-5', debit: 0, credit: visaTotalBuyPKR, vendorId: selectedVendor, description }
-       ];
     } else if (type === 'Receipt') {
        voucher.entries = [
         { id: generateId(), accountId: depositAccount, debit: receiptTotalPKR, credit: 0, description: narration },
-        { id: generateId(), accountId: sourceEntityType === 'Customers' ? 'acc-3' : 'acc-5', debit: 0, credit: receiptTotalPKR, customerId: sourceEntityType === 'Customers' ? (selectedCustomer || undefined) : undefined, vendorId: sourceEntityType === 'Vendors' ? (selectedVendor || undefined) : undefined, description: narration }
+        { id: generateId(), accountId: sourceEntityType === 'Customers' ? 'acc-3' : 'acc-5', debit: 0, credit: receiptTotalPKR, customerId: sourceEntityType === 'Customers' ? selectedCustomer : undefined, vendorId: sourceEntityType === 'Vendors' ? selectedVendor : undefined, description: narration }
       ];
     }
 
@@ -236,7 +247,7 @@ const VoucherEntryPage: React.FC = () => {
         <div className="space-y-8">
             <div className="flex items-center gap-3 text-emerald-500">
                <i className="fa-solid fa-route text-sm"></i>
-               <h3 className="text-[11px] font-black uppercase tracking-[0.2em]">Route Details</h3>
+               <h3 className="text-[11px] font-black uppercase tracking-[0.2em]">Registry & Route</h3>
             </div>
             <div className="grid grid-cols-2 gap-8">
                <div className="space-y-3">
@@ -318,55 +329,50 @@ const VoucherEntryPage: React.FC = () => {
         <div className="space-y-8">
             <div className="flex items-center gap-3 text-purple-500">
                <i className="fa-solid fa-passport text-sm"></i>
-               <h3 className="text-[11px] font-black uppercase tracking-[0.2em]">Case Identity</h3>
+               <h3 className="text-[11px] font-black uppercase tracking-[0.2em]">Simplified Visa Registry</h3>
             </div>
-            <div className="space-y-4">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Pax Full Name</label>
-              <input className="w-full bg-slate-50 dark:bg-slate-800 border rounded-2xl px-6 py-4 text-sm font-bold uppercase outline-none" value={passenger} onChange={e => setPassenger(e.target.value)} />
-            </div>
+            
             <div className="grid grid-cols-2 gap-8">
                <div className="space-y-3">
-                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Passport Number</label>
-                 <input className="w-full bg-slate-50 dark:bg-slate-800 border rounded-2xl px-6 py-4 text-sm font-bold uppercase outline-none" value={passportNo} onChange={e => setPassportNo(e.target.value)} />
-               </div>
-               <div className="space-y-3">
-                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Processing Status</label>
-                 <select className="w-full bg-slate-50 dark:bg-slate-800 border rounded-2xl px-6 py-4 text-sm font-bold outline-none" value={processingStatus} onChange={e => setProcessingStatus(e.target.value)}>
-                    <option>Pending</option><option>In Process</option><option>Submitted</option><option>Approved</option>
-                 </select>
-               </div>
-            </div>
-        </div>
-
-        <div className="space-y-8">
-            <div className="flex items-center gap-3 text-purple-600">
-               <i className="fa-solid fa-earth-asia text-sm"></i>
-               <h3 className="text-[11px] font-black uppercase tracking-[0.2em]">Destination & Timeline</h3>
-            </div>
-            <div className="grid grid-cols-2 gap-8">
-               <div className="space-y-3">
-                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Destination Country</label>
-                 <input className="w-full bg-slate-50 dark:bg-slate-800 border rounded-2xl px-6 py-4 text-sm font-bold uppercase" value={country} onChange={e => setCountry(e.target.value)} />
-               </div>
-               <div className="space-y-3">
-                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Visa Type</label>
-                 <input className="w-full bg-slate-50 dark:bg-slate-800 border rounded-2xl px-6 py-4 text-sm font-bold" value={visaType} onChange={e => setVisaType(e.target.value)} />
-               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-8">
-               <div className="space-y-3">
-                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Debit (Customer) *</label>
-                 <select required className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-emerald-500/20 rounded-2xl px-6 py-4 text-sm font-bold" value={selectedCustomer} onChange={e => setSelectedCustomer(e.target.value)}>
-                    <option value="">Select Customer</option>
+                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Customer (Receivable) *</label>
+                 <select required className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-emerald-500/20 rounded-2xl px-6 py-4 text-sm font-bold outline-none" value={selectedCustomer} onChange={e => setSelectedCustomer(e.target.value)}>
+                    <option value="">Select Account</option>
                     {state.customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                  </select>
                </div>
                <div className="space-y-3">
-                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Credit (Vendor/Supplier) *</label>
-                 <select required className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-rose-500/20 rounded-2xl px-6 py-4 text-sm font-bold" value={selectedVendor} onChange={e => setSelectedVendor(e.target.value)}>
-                    <option value="">Select Vendor</option>
+                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Vendor (Payable) *</label>
+                 <select required className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-rose-500/20 rounded-2xl px-6 py-4 text-sm font-bold outline-none" value={selectedVendor} onChange={e => setSelectedVendor(e.target.value)}>
+                    <option value="">Select Provider</option>
                     {state.vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                  </select>
+               </div>
+            </div>
+
+            <div className="space-y-4">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Visa Head Name / Service Title *</label>
+              <input 
+                className="w-full bg-slate-50 dark:bg-slate-800 border rounded-2xl px-6 py-4 text-sm font-bold uppercase outline-none focus:border-purple-500" 
+                placeholder="e.g. SAUDI UMRIA VISA - 1 MONTH" 
+                value={visaType} 
+                onChange={e => setVisaType(e.target.value)} 
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-8">
+               <div className="space-y-3">
+                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Send to Embassy</label>
+                 <input 
+                    className="w-full bg-slate-50 dark:bg-slate-800 border rounded-2xl px-6 py-4 text-sm font-bold uppercase outline-none focus:border-purple-500" 
+                    placeholder="Embassy Name / Courier Details" 
+                    value={embassy} 
+                    onChange={e => setEmbassy(e.target.value)} 
+                 />
+               </div>
+               <div className="space-y-3">
+                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Pax Name (Optional)</label>
+                 <input className="w-full bg-slate-50 dark:bg-slate-800 border rounded-2xl px-6 py-4 text-sm font-bold uppercase outline-none" value={passenger} onChange={e => setPassenger(e.target.value)} />
                </div>
             </div>
         </div>
@@ -376,16 +382,16 @@ const VoucherEntryPage: React.FC = () => {
         <div className="bg-slate-50 dark:bg-slate-800/50 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-700 space-y-8 shadow-sm">
            <div className="flex items-center gap-3 text-purple-500">
              <i className="fa-solid fa-file-invoice-dollar text-sm"></i>
-             <h3 className="text-[10px] font-black uppercase tracking-[0.2em]">Ledger Values ({currency})</h3>
+             <h3 className="text-[10px] font-black uppercase tracking-[0.2em]">Financial values ({currency})</h3>
            </div>
-           <div className="grid grid-cols-2 gap-4">
+           <div className="space-y-4">
               <div className="space-y-2">
-                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Customer Sale Price</label>
-                 <input type="number" className="w-full bg-white dark:bg-slate-800 border rounded-xl px-4 py-3 text-sm font-bold" value={saleRate} onChange={e => setSaleRate(Number(e.target.value))} />
+                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Sale Price (Customer)</label>
+                 <input type="number" className="w-full bg-white dark:bg-slate-800 border rounded-xl px-4 py-3 text-sm font-bold outline-none border-emerald-500/20" value={saleRate} onChange={e => setSaleRate(Number(e.target.value))} />
               </div>
               <div className="space-y-2">
-                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Supplier Net Cost</label>
-                 <input type="number" className="w-full bg-white dark:bg-slate-800 border rounded-xl px-4 py-3 text-sm font-bold" value={buyRate} onChange={e => setBuyRate(Number(e.target.value))} />
+                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Cost Price (Vendor)</label>
+                 <input type="number" className="w-full bg-white dark:bg-slate-800 border rounded-xl px-4 py-3 text-sm font-bold outline-none border-rose-500/20" value={buyRate} onChange={e => setBuyRate(Number(e.target.value))} />
               </div>
            </div>
         </div>
@@ -393,16 +399,16 @@ const VoucherEntryPage: React.FC = () => {
         <div className="bg-[#0B1120] rounded-[2.5rem] p-10 text-white flex flex-col justify-between min-h-[400px] shadow-2xl relative overflow-hidden">
            <div className="space-y-10 relative z-10">
               <div className="space-y-1">
-                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Gross Functional Sale</p>
+                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Impacted Sale</p>
                  <span className="text-4xl font-black text-emerald-400">Rs. {Math.round(visaTotalSalePKR).toLocaleString()}</span>
               </div>
-              <div className="pt-10 border-t border-slate-800 text-center">
-                 <p className="text-[10px] font-black text-purple-400 uppercase tracking-[0.2em] mb-2">Visa Case Profit</p>
+              <div className="pt-10 border-t border-slate-800">
+                 <p className="text-[10px] font-black text-purple-400 uppercase tracking-[0.2em] mb-2">Net Profit Margin</p>
                  <h2 className="text-5xl font-black tracking-tighter">Rs. {Math.round(visaProfitPKR).toLocaleString()}</h2>
               </div>
            </div>
-           <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-widest py-5 rounded-2xl w-full flex items-center justify-center gap-3 mt-10 shadow-xl">
-             <i className="fa-solid fa-stamp"></i> Confirm & Post Visa
+           <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-widest py-5 rounded-2xl w-full flex items-center justify-center gap-3 mt-10 shadow-xl transition-all">
+             <i className="fa-solid fa-stamp"></i> Save Visa Case
            </button>
         </div>
       </div>
@@ -460,19 +466,34 @@ const VoucherEntryPage: React.FC = () => {
                 <input className="w-full bg-slate-50 dark:bg-slate-800 border rounded-2xl px-6 py-4 text-sm font-bold uppercase" value={hotelCity} onChange={e => setHotelCity(e.target.value)} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-2 gap-6 items-end">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Check-In</label>
                 <input type="date" className="w-full bg-slate-50 border rounded-2xl px-6 py-4 text-sm font-bold" value={checkIn} onChange={e => setCheckIn(e.target.value)} />
               </div>
-              <div className="space-y-2 relative">
+              <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Check-Out</label>
                 <input type="date" className="w-full bg-slate-50 border rounded-2xl px-6 py-4 text-sm font-bold" value={checkOut} onChange={e => setCheckOut(e.target.value)} />
-                <div className="absolute -top-3 right-4 bg-emerald-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest">
-                   {duration} Nights Stay
-                </div>
               </div>
             </div>
+
+            {/* SEPARATE NIGHTS STAY INDICATOR */}
+            <div className="bg-sky-50 dark:bg-slate-800 border border-sky-100 dark:border-slate-700 rounded-3xl p-8 flex items-center justify-between shadow-sm">
+               <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-sky-500 flex items-center justify-center text-white shadow-lg shadow-sky-500/20">
+                    <i className="fa-solid fa-moon text-xl"></i>
+                  </div>
+                  <div>
+                    <h4 className="text-[11px] font-black text-sky-600 dark:text-sky-400 uppercase tracking-[0.2em]">Total Stay Duration</h4>
+                    <p className="text-xs font-bold text-slate-400">Calculated between check-in and check-out dates</p>
+                  </div>
+               </div>
+               <div className="flex items-baseline gap-2">
+                  <span className="text-5xl font-black text-slate-900 dark:text-white tracking-tighter">{duration}</span>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nights Stay</span>
+               </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-6">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rooms Count</label>
@@ -496,7 +517,7 @@ const VoucherEntryPage: React.FC = () => {
       <div className="col-span-4 space-y-8">
         <div className="bg-[#0B1120] rounded-[2.5rem] p-10 text-white flex flex-col justify-between min-h-[500px] shadow-2xl relative overflow-hidden">
           <div className="space-y-10 relative z-10">
-            <h4 className="text-[11px] font-black text-sky-400 uppercase tracking-[0.2em]">Financial Impacts</h4>
+            <h4 className="text-[11px] font-black text-sky-400 uppercase tracking-[0.2em]">Financial Position</h4>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Sale / Night ({currency})</label>
@@ -513,10 +534,20 @@ const VoucherEntryPage: React.FC = () => {
                 <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Gross Profit (PKR)</span>
                 <span className="text-2xl font-black text-emerald-400">Rs. {Math.round(hotelProfitPKR).toLocaleString()}</span>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                 <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700/50">
+                    <p className="text-[7px] font-black text-slate-500 uppercase mb-1">RECEIVABLE</p>
+                    <p className="text-[10px] font-black">Rs. {Math.round(hotelTotalSalePKR).toLocaleString()}</p>
+                 </div>
+                 <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-700/50">
+                    <p className="text-[7px] font-black text-slate-500 uppercase mb-1">PAYABLE</p>
+                    <p className="text-[10px] font-black">Rs. {Math.round(hotelTotalBuyPKR).toLocaleString()}</p>
+                 </div>
+              </div>
             </div>
           </div>
           <button type="submit" className="bg-sky-500 hover:bg-sky-400 text-[#0B1120] font-black text-xs uppercase py-5 rounded-2xl w-full shadow-xl">
-             <i className="fa-solid fa-sync mr-2"></i> Confirm & Post
+             <i className="fa-solid fa-sync mr-2"></i> Confirm & Post Hotel
           </button>
         </div>
       </div>
@@ -529,7 +560,7 @@ const VoucherEntryPage: React.FC = () => {
         <div className="space-y-8">
             <div className="flex items-center gap-3 text-emerald-500">
                <i className="fa-solid fa-bus text-sm"></i>
-               <h3 className="text-[11px] font-black uppercase tracking-[0.2em]">Transport Details</h3>
+               <h3 className="text-[11px] font-black uppercase tracking-[0.2em]">Transport Logistics</h3>
             </div>
             
             <div className="grid grid-cols-1 gap-6">
@@ -541,7 +572,7 @@ const VoucherEntryPage: React.FC = () => {
                 </select>
               </div>
               <div className="space-y-3">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Vendor (Payable) *</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Supplier (Payable) *</label>
                 <select className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-rose-500/20 rounded-2xl px-6 py-4 text-sm font-bold outline-none" value={selectedVendor} onChange={e => setSelectedVendor(e.target.value)} required>
                   <option value="">Select Service Provider</option>
                   {state.vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
@@ -563,7 +594,7 @@ const VoucherEntryPage: React.FC = () => {
             </div>
 
             <div className="space-y-3">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Route</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Route Detail</label>
               <input list="sectors" className="w-full bg-slate-50 border rounded-2xl px-6 py-4 text-sm font-bold uppercase" value={route} onChange={e => setRoute(e.target.value)} />
               <datalist id="sectors">{SECTOR_RATES.map((s, i) => <option key={i} value={s.sector} />)}</datalist>
             </div>
@@ -578,7 +609,7 @@ const VoucherEntryPage: React.FC = () => {
                 <input type="number" className="w-full bg-slate-50 border rounded-2xl px-6 py-4 text-sm font-bold" value={buyRate} onChange={e => setBuyRate(Number(e.target.value))} />
               </div>
               <div className="space-y-3">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Quantity</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Qty / Trips</label>
                 <input type="number" min="1" className="w-full bg-slate-50 border rounded-2xl px-6 py-4 text-sm font-bold" value={quantity} onChange={e => setQuantity(Number(e.target.value))} />
               </div>
             </div>
@@ -591,7 +622,6 @@ const VoucherEntryPage: React.FC = () => {
                 value={narration} 
                 onChange={e => setNarration(e.target.value)} 
               />
-              <p className="text-[9px] text-slate-400 font-bold italic">* This content will be printed on the invoice and saved in the ledger.</p>
             </div>
         </div>
       </div>
@@ -600,16 +630,16 @@ const VoucherEntryPage: React.FC = () => {
         <div className="bg-[#0B1120] rounded-[2.5rem] p-10 text-white flex flex-col justify-between min-h-[400px] shadow-2xl relative overflow-hidden">
            <div className="space-y-10 relative z-10">
               <div className="space-y-1">
-                 <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Customer Total (PKR)</p>
+                 <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Client Receivable (PKR)</p>
                  <span className="text-4xl font-black tracking-tighter">Rs. {Math.round(transportTotalSalePKR).toLocaleString()}</span>
               </div>
               <div className="space-y-1">
-                 <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Supplier Total (PKR)</p>
+                 <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Vendor Payable (PKR)</p>
                  <span className="text-2xl font-black tracking-tighter">Rs. {Math.round(transportTotalBuyPKR).toLocaleString()}</span>
               </div>
            </div>
            <button type="submit" className="bg-emerald-500 hover:bg-emerald-400 text-[#0B1120] font-black text-xs uppercase py-5 rounded-2xl w-full shadow-xl transition-all">
-             <i className="fa-solid fa-file-signature mr-2"></i> Post Bill
+             <i className="fa-solid fa-file-signature mr-2"></i> Save Transport Bill
            </button>
         </div>
       </div>
@@ -651,7 +681,7 @@ const VoucherEntryPage: React.FC = () => {
             </div>
           </div>
           <button type="submit" className="bg-sky-500 hover:bg-sky-400 text-[#0B1120] font-black text-xs uppercase py-5 rounded-2xl w-full shadow-xl mt-10">
-            <i className="fa-solid fa-save mr-2"></i> Save & Post
+            <i className="fa-solid fa-save mr-2"></i> Post Receipt
           </button>
         </div>
       </div>

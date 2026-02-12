@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useApp } from '../App';
@@ -84,19 +85,25 @@ const VoucherList: React.FC = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="space-y-1">
-                        {customer && (
+                      <div className="flex flex-col gap-1.5">
+                        {customer ? (
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">CUST:</span>
-                            <span className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-tighter truncate max-w-[120px]" title={customer.name}>{customer.name}</span>
+                            <span className="w-8 text-[7px] font-black text-sky-500 bg-sky-50 dark:bg-sky-900/30 px-1 py-0.5 rounded uppercase tracking-tighter text-center">CUST</span>
+                            <span className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-tighter truncate max-w-[140px]" title={customer.name}>{customer.name}</span>
                           </div>
-                        )}
-                        {vendor && (
+                        ) : v.type !== 'Receipt' ? (
+                          <div className="text-[8px] font-bold text-slate-300 italic uppercase">No Customer</div>
+                        ) : null}
+                        
+                        {vendor ? (
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">VEND:</span>
-                            <span className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-tighter truncate max-w-[120px]" title={vendor.name}>{vendor.name}</span>
+                            <span className="w-8 text-[7px] font-black text-rose-500 bg-rose-50 dark:bg-rose-900/30 px-1 py-0.5 rounded uppercase tracking-tighter text-center">VEND</span>
+                            <span className="text-[10px] font-black text-slate-700 dark:text-slate-300 uppercase tracking-tighter truncate max-w-[140px]" title={vendor.name}>{vendor.name}</span>
                           </div>
-                        )}
+                        ) : v.type !== 'Receipt' ? (
+                          <div className="text-[8px] font-bold text-slate-300 italic uppercase">No Vendor</div>
+                        ) : null}
+
                         {!customer && !vendor && <span className="text-[10px] font-bold text-slate-300 dark:text-slate-600 italic">INTERNAL</span>}
                       </div>
                     </td>
