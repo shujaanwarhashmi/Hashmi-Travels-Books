@@ -1,6 +1,6 @@
 
 -- ======================================================
--- HASHMI TRAVEL BOOKS - MASTER DATABASE (v16.18)
+-- HASHMI TRAVEL BOOKS - MASTER DATABASE (v16.22)
 -- ATOMIC DOUBLE-ENTRY ENGINE & DATA INTEGRITY FIX
 -- ======================================================
 
@@ -73,7 +73,7 @@ CREATE TABLE vendors (
 CREATE TABLE hotel_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     voucher_no TEXT UNIQUE NOT NULL,
-    voucher_date DATE DEFAULT CURRENT_DATE,
+    voucher_date DATE NOT NULL DEFAULT CURRENT_DATE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
     vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
     hotel_name TEXT,
@@ -93,7 +93,7 @@ CREATE TABLE hotel_vouchers (
 CREATE TABLE transport_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     voucher_no TEXT UNIQUE NOT NULL,
-    voucher_date DATE DEFAULT CURRENT_DATE,
+    voucher_date DATE NOT NULL DEFAULT CURRENT_DATE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
     vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
     route TEXT,
@@ -111,7 +111,7 @@ CREATE TABLE transport_vouchers (
 CREATE TABLE ticket_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     voucher_no TEXT UNIQUE NOT NULL,
-    voucher_date DATE DEFAULT CURRENT_DATE,
+    voucher_date DATE NOT NULL DEFAULT CURRENT_DATE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
     vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
     passenger_name TEXT,
@@ -132,7 +132,7 @@ CREATE TABLE ticket_vouchers (
 CREATE TABLE visa_vouchers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     voucher_no TEXT UNIQUE NOT NULL,
-    voucher_date DATE DEFAULT CURRENT_DATE,
+    voucher_date DATE NOT NULL DEFAULT CURRENT_DATE,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
     vendor_id UUID NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
     passenger_name TEXT,
@@ -151,7 +151,7 @@ CREATE TABLE visa_vouchers (
 CREATE TABLE receipts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     receipt_no TEXT UNIQUE NOT NULL,
-    receipt_date DATE DEFAULT CURRENT_DATE,
+    receipt_date DATE NOT NULL DEFAULT CURRENT_DATE,
     customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
     vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
     deposit_account_id UUID REFERENCES chart_of_accounts(id) ON DELETE RESTRICT,
@@ -163,7 +163,7 @@ CREATE TABLE receipts (
 CREATE TABLE ledger_entries (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     entry_date DATE NOT NULL,
-    account_id UUID REFERENCES chart_of_accounts(id) ON DELETE CASCADE,
+    account_id UUID NOT NULL REFERENCES chart_of_accounts(id) ON DELETE CASCADE,
     party_id UUID, 
     reference_id UUID NOT NULL, 
     reference_no TEXT,
@@ -173,7 +173,7 @@ CREATE TABLE ledger_entries (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. MANDATORY DOUBLE-ENTRY POSTING ENGINE
+-- 5. TRANSACTIONAL DOUBLE-ENTRY POSTING ENGINE
 CREATE OR REPLACE FUNCTION process_voucher_ledger_post()
 RETURNS TRIGGER SECURITY DEFINER AS $$
 DECLARE
@@ -186,16 +186,20 @@ DECLARE
     v_duration INT;
     v_roe DECIMAL(10,4);
 BEGIN
-    -- Resolve System Account IDs
-    SELECT id INTO v_ar_id FROM chart_of_accounts WHERE account_code = '1003' LIMIT 1;
-    SELECT id INTO v_ap_id FROM chart_of_accounts WHERE account_code = '2001' LIMIT 1;
+    -- 1. Resolve Core Account IDs (Raise Error if system setup is incomplete)
+    SELECT id INTO v_ar_id FROM chart_of_accounts WHERE account_code = '1003';
+    SELECT id INTO v_ap_id FROM chart_of_accounts WHERE account_code = '2001';
     
-    -- Clear existing entries for this reference to prevent duplication
+    IF v_ar_id IS NULL OR v_ap_id IS NULL THEN
+        RAISE EXCEPTION 'COA_ERROR: System Accounts (Receivable 1003 or Payable 2001) are missing. Ledger posting aborted.';
+    END IF;
+
+    -- 2. Clear stale entries for this voucher (Atomic Cleanup)
     DELETE FROM ledger_entries WHERE reference_id = NEW.id;
 
     v_roe := COALESCE(NEW.roe, 1);
 
-    -- Type-specific calculation logic
+    -- 3. Voucher Specific Type Logic
     IF TG_TABLE_NAME = 'hotel_vouchers' THEN
         SELECT id INTO v_inc_id FROM chart_of_accounts WHERE account_code = '4002' LIMIT 1;
         v_duration := COALESCE(NULLIF(GREATEST(1, NEW.check_out - NEW.check_in), 0), 1);
@@ -223,13 +227,13 @@ BEGIN
 
     ELSIF TG_TABLE_NAME = 'receipts' THEN
         v_total_sale := COALESCE(NEW.amount_pkr, 0);
-        v_narration := COALESCE(NEW.narration, 'Receipt Payment');
+        v_narration := COALESCE(NEW.narration, 'Payment Receipt');
         
-        -- Receipt Debit: Cash/Bank
+        -- Receipt Side 1: Debit Deposit Account (Cash/Bank)
         INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, debit, narration)
         VALUES (NEW.receipt_date, NEW.deposit_account_id, NEW.id, NEW.receipt_no, v_total_sale, v_narration);
         
-        -- Receipt Credit: Customer or Vendor
+        -- Receipt Side 2: Credit Party Account (Customer/Vendor)
         IF NEW.customer_id IS NOT NULL THEN
             INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
             VALUES (NEW.receipt_date, v_ar_id, NEW.customer_id, NEW.id, NEW.receipt_no, v_total_sale, v_narration);
@@ -240,24 +244,28 @@ BEGIN
         RETURN NEW;
     END IF;
 
-    -- Standard Service Double-Entry (Debit Customer / Credit Vendor)
+    -- 4. Mandatory Service Double-Entry (Transactional & Atomic)
     
-    -- Side 1: Debit Party (Receivable)
-    IF NEW.customer_id IS NOT NULL AND v_total_sale > 0 THEN
+    -- ENTRY 1: DEBIT CUSTOMER (Increase Receivable)
+    IF NEW.customer_id IS NOT NULL THEN
         INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, debit, narration)
         VALUES (NEW.voucher_date, v_ar_id, NEW.customer_id, NEW.id, NEW.voucher_no, v_total_sale, v_narration);
+    ELSE
+        RAISE EXCEPTION 'VALIDATION_ERROR: Customer account is mandatory for service vouchers.';
     END IF;
     
-    -- Side 2: Credit Party (Payable / Cost)
-    IF NEW.vendor_id IS NOT NULL AND v_total_buy > 0 THEN
+    -- ENTRY 2: CREDIT VENDOR (Increase Payable/Liability)
+    IF NEW.vendor_id IS NOT NULL THEN
         INSERT INTO ledger_entries(entry_date, account_id, party_id, reference_id, reference_no, credit, narration)
         VALUES (NEW.voucher_date, v_ap_id, NEW.vendor_id, NEW.id, NEW.voucher_no, v_total_buy, 'Cost: ' || v_narration);
+    ELSE
+        RAISE EXCEPTION 'VALIDATION_ERROR: Vendor account is mandatory for service vouchers.';
     END IF;
 
-    -- Side 3: Income (Markup / Margin)
+    -- ENTRY 3: CREDIT INCOME (Capture Profit/Markup)
     IF v_inc_id IS NOT NULL AND (v_total_sale - v_total_buy) <> 0 THEN
         INSERT INTO ledger_entries(entry_date, account_id, reference_id, reference_no, credit, narration)
-        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (v_total_sale - v_total_buy), 'Markup: ' || v_narration);
+        VALUES (NEW.voucher_date, v_inc_id, NEW.id, NEW.voucher_no, (v_total_sale - v_total_buy), 'Margin: ' || v_narration);
     END IF;
 
     RETURN NEW;

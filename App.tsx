@@ -292,7 +292,7 @@ const App: React.FC = () => {
       }));
       setDbStatus(allVouchers.length === 0 && (custs.data?.length === 0 || !custs.data) ? 'empty' : 'connected');
     } catch (e) { 
-      console.error('Fetch Fatal Error:', e);
+      console.error('Sync Fatal Error:', e);
       setDbStatus('error'); 
     } finally { 
       setLoading(false); 
@@ -310,12 +310,13 @@ const App: React.FC = () => {
   const addVoucher = async (v: Voucher) => {
     setLoading(true);
     try {
-      // FIX: Standardize party IDs to NULL if they are empty strings
-      const cId = v.customerId && v.customerId !== '' ? v.customerId : null;
-      const vId = v.vendorId && v.vendorId !== '' ? v.vendorId : null;
+      // Data Normalization for UUIDs
+      const cId = (v.customerId && v.customerId.trim() !== '' && v.customerId !== '---') ? v.customerId : null;
+      const vId = (v.vendorId && v.vendorId.trim() !== '' && v.vendorId !== '---') ? v.vendorId : null;
 
+      // Business Logic Validation
       if (v.type !== 'Receipt' && (!cId || !vId)) {
-        throw new Error(`Data Validation Error: Both Customer and Vendor must be selected for ${v.type} entries.`);
+        throw new Error(`Integrity Fail: Both Client and Supplier must be linked for ${v.type} vouchers to balance the ledger.`);
       }
 
       let table = '';
@@ -325,7 +326,8 @@ const App: React.FC = () => {
         customer_id: cId, 
         vendor_id: vId, 
         roe: Number(v.roe || 1),
-        remarks: v.description
+        remarks: v.description,
+        status: 'Posted'
       };
 
       if (v.type === 'Hotel') { 
@@ -359,6 +361,7 @@ const App: React.FC = () => {
         }; 
       }
 
+      // Upsert logic (implicit transaction in Supabase trigger)
       const { error } = (v.id && v.id.length > 20) 
         ? await supabase.from(table).update(payload).eq('id', v.id) 
         : await supabase.from(table).insert(payload);
@@ -366,15 +369,15 @@ const App: React.FC = () => {
       if (error) throw error;
       await fetchData();
     } catch (err: any) { 
-      console.error('Core Storage Error:', err);
-      alert(err.message || "Failed to finalize database commit."); 
+      console.error('Database Error:', err);
+      alert(err.message || "A database constraint prevented this voucher from being saved."); 
     } finally { 
       setLoading(false); 
     }
   };
 
   const deleteVoucher = async (id: string) => {
-    if (!window.confirm("CRITICAL: Permanent delete? This will wipe ledger history for this record.")) return;
+    if (!window.confirm("CRITICAL: Permanent deletion. Ledger entries will be wiped. Continue?")) return;
     setLoading(true);
     try {
       const v = state.vouchers.find(x => x.id === id);

@@ -141,13 +141,18 @@ const VoucherEntryPage: React.FC = () => {
 
     if (!voucherNo.trim()) return alert("Voucher Reference is mandatory.");
 
-    // FIX: Ensure both Customer and Vendor are strictly selected for service vouchers
+    // STRICT VALIDATION: Ensure party IDs are selected before proceeding
     if (type !== 'Receipt') {
-        if (!selectedCustomer || selectedCustomer === '') {
-            return alert("SYSTEM ERROR: A Client (Customer) must be selected to proceed.");
+        if (!selectedCustomer || selectedCustomer.trim() === '') {
+            return alert("SYSTEM ERROR: A Client (Customer) must be selected for this voucher.");
         }
-        if (!selectedVendor || selectedVendor === '') {
-            return alert("SYSTEM ERROR: A Service Provider (Vendor) must be selected to proceed.");
+        if (!selectedVendor || selectedVendor.trim() === '') {
+            return alert("SYSTEM ERROR: A Service Provider (Vendor) must be selected for this voucher.");
+        }
+    } else {
+        const targetParty = sourceEntityType === 'Customers' ? selectedCustomer : selectedVendor;
+        if (!targetParty || targetParty.trim() === '') {
+            return alert("SYSTEM ERROR: You must select a Ledger Account to post this receipt.");
         }
     }
 
@@ -179,6 +184,7 @@ const VoucherEntryPage: React.FC = () => {
       description: description || narration, 
       totalAmount: finalAmount, 
       entries: [],
+      // FORCED BINDING: Ensure these state variables are explicitly mapped to the object
       customerId: selectedCustomer !== '' ? selectedCustomer : undefined,
       vendorId: selectedVendor !== '' ? selectedVendor : undefined,
       passengerName: passenger, 
@@ -189,12 +195,12 @@ const VoucherEntryPage: React.FC = () => {
       mealPlan, adults, children,
       transportType, route: type === 'Ticket' ? sector : route, vehicleNo, driverName, quantity: Number(quantity || 1),
       salePrice: type === 'Receipt' ? receiptAmount : (type === 'Ticket' ? (baseFare + taxes + serviceFee) : saleRate),
-      buyPrice: type === 'Transport' ? buyRate : (type === 'Ticket' ? netBuyCost : buyRate),
+      buyPrice: (type === 'Ticket' ? netBuyCost : buyRate),
       airlineName: airline, gdsPnr, ticketNumber: ticketNo, baseFare, taxes, serviceFee,
       passportNumber: passportNo, visaType, processingStatus, expiryDate, sendToEmbassy: embassy
     };
 
-    // Construct entries for internal context (actual ledger posting happens in Supabase via Triggers)
+    // Construct entries for local state consistency (Supabase will handle the actual ledger via triggers)
     if (type === 'Hotel') {
       voucher.entries = [
         { id: generateId(), accountId: 'acc-3', debit: hotelTotalSalePKR, credit: 0, customerId: selectedCustomer },
