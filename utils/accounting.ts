@@ -1,4 +1,3 @@
-
 import { Voucher, VoucherEntry, Account, GlobalState, Customer, Vendor } from '../types';
 
 export const formatCurrency = (amount: number, currency: string = 'PKR') => {
@@ -11,7 +10,7 @@ export const formatCurrency = (amount: number, currency: string = 'PKR') => {
 
 /**
  * Calculates the net balance (Debit - Credit) for an account.
- * For control accounts (acc-3, acc-5), it aggregates all individual party opening balances.
+ * For control accounts (acc-3, acc-5), it aggregates all individual party openings + movements.
  */
 export const calculateAccountBalance = (
   accountId: string, 
@@ -21,8 +20,14 @@ export const calculateAccountBalance = (
   let totalDebit = 0;
   let totalCredit = 0;
 
-  // 1. Calculate base opening balance from the registry
+  // 1. Determine if this is a control account
+  const account = state.accounts.find(a => a.id === accountId || a.dbId === accountId || a.code === accountId);
+  const isAR = account?.code === '1003';
+  const isAP = account?.code === '2001';
+
+  // 2. Add Opening Balances from Registries
   if (partyId) {
+    // Specific Party Calculation
     const cust = state.customers.find(c => c.id === partyId);
     const vend = state.vendors.find(v => v.id === partyId);
     
@@ -34,13 +39,13 @@ export const calculateAccountBalance = (
       else totalCredit += Number(vend.openingBalance);
     }
   } else {
-    // Aggregation for control accounts (AR / AP)
-    if (accountId === 'acc-3' || accountId === '1003') {
+    // Aggregation for Control Accounts in Registry/Reports
+    if (isAR) {
       state.customers.forEach(c => {
         if (c.openingBalanceType === 'Receivable') totalDebit += Number(c.openingBalance);
         else totalCredit += Number(c.openingBalance);
       });
-    } else if (accountId === 'acc-5' || accountId === '2001') {
+    } else if (isAP) {
       state.vendors.forEach(v => {
         if (v.openingBalanceType === 'Advance') totalDebit += Number(v.openingBalance);
         else totalCredit += Number(v.openingBalance);
@@ -48,16 +53,16 @@ export const calculateAccountBalance = (
     }
   }
 
-  // 2. Aggregate all Posted ledger entries from vouchers
+  // 3. Aggregate all Ledger entries (Double-entry postings)
   state.vouchers.forEach(v => {
     if (v.status && v.status !== 'Posted') return;
     
     v.entries.forEach(e => {
-      // Handle both local ID and DB UUID mapping
-      const account = state.accounts.find(a => a.id === accountId || a.dbId === accountId || a.code === accountId);
-      if (!account) return;
-
-      if (e.accountId === account.id || e.accountId === account.dbId) {
+      // Direct account match
+      const entryMatchesAccount = e.accountId === accountId || (account && e.accountId === account.id) || (account && e.accountId === account.dbId);
+      
+      if (entryMatchesAccount) {
+        // If we are looking for a specific party, filter here
         if (partyId) {
           if (e.customerId !== partyId && e.vendorId !== partyId) return;
         }
@@ -79,24 +84,24 @@ export const getAccountLedger = (accountId: string, fromDate: string, toDate: st
   let totalCreditBefore = 0;
 
   // Add Party Openings if this is a control account
-  if (account.id === 'acc-3' || account.code === '1003') {
+  if (account.code === '1003') {
     state.customers.forEach(c => {
       if (c.openingBalanceType === 'Receivable') totalDebitBefore += Number(c.openingBalance);
       else totalCreditBefore += Number(c.openingBalance);
     });
-  } else if (account.id === 'acc-5' || account.code === '2001') {
+  } else if (account.code === '2001') {
     state.vendors.forEach(v => {
       if (v.openingBalanceType === 'Advance') totalDebitBefore += Number(v.openingBalance);
       else totalCreditBefore += Number(v.openingBalance);
     });
   }
 
-  // Calculate voucher movement before period
+  // Calculate movement before the period (Historical data)
   state.vouchers.forEach(v => {
     if (v.status && v.status !== 'Posted') return;
     if (new Date(v.date) < new Date(fromDate)) {
       v.entries.forEach(e => {
-        if (e.accountId === account.id || e.accountId === account.dbId) {
+        if (e.accountId === account.id || e.accountId === account.dbId || e.accountId === account.code) {
           totalDebitBefore += Number(e.debit || 0);
           totalCreditBefore += Number(e.credit || 0);
         }
@@ -124,7 +129,7 @@ export const getAccountLedger = (accountId: string, fromDate: string, toDate: st
 
   periodVouchers.forEach(v => {
     v.entries.forEach(e => {
-      if (e.accountId === account.id || e.accountId === account.dbId) {
+      if (e.accountId === account.id || e.accountId === account.dbId || e.accountId === account.code) {
         const entryDebit = Number(e.debit || 0);
         const entryCredit = Number(e.credit || 0);
         
@@ -172,7 +177,7 @@ export const getLedger = (partyId: string, partyType: 'Customer' | 'Vendor', sta
     date: 'Opening',
     voucherNo: '-',
     type: 'Opening Balance',
-    description: 'Initial balance',
+    description: 'Initial balance from registry',
     debit: totalDebit,
     credit: totalCredit,
     balance: runningBalance
